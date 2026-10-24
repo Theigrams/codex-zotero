@@ -1,0 +1,391 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Zotero 阅读器</title>
+<style>
+  /* BUNDLED_KATEX */
+  :root {
+    --bg: #ffffff; --text: #1f1f1d; --muted: #6e6e68; --line: #e2e1dc; --gap: #d9d8d2; --hover: #f2f1ee; --accent: #2f5bd3;
+    --bar-h: 28px; color-scheme: light dark;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root:not([data-theme="light"]) {
+      --bg: #1e1e1d; --text: #e8e8e3; --muted: #9d9d96; --line: #383836; --gap: #2c2c2a; --hover: #2a2a28; --accent: #8aa6ff;
+    }
+  }
+  * { box-sizing: border-box; }
+  /* Codex injects -webkit-font-smoothing: antialiased on html and body, which thins every glyph; text renders
+     as in a browser again (higher specificity than Codex's rule). */
+  html:root, html body { -webkit-font-smoothing: auto; }
+  html, body { margin: 0; height: 100%; overflow: hidden; background: var(--bg); color: var(--text);
+    font: 13px/1.45 -apple-system, BlinkMacSystemFont, "PingFang SC", sans-serif; }
+  button { font: inherit; color: inherit; background: none; border: 0; padding: 0; cursor: pointer; }
+  [hidden] { display: none !important; }
+
+  /* Reading surface: the whole panel; pages run edge to edge, one hairline between pages. */
+  #scroller { position: absolute; inset: 0; overflow: auto; background: var(--gap); outline: none; overscroll-behavior: contain; }
+  #content { position: relative; transform-origin: 0 0; }
+  .page { position: absolute; background: #fff; overflow: hidden; }
+  .page img { position: absolute; left: 0; display: block; width: 100%; user-select: none; -webkit-user-drag: none; }
+  .page img.preview { top: 0; height: 100%; }
+  .page { cursor: text; }
+  body.alt .page { cursor: crosshair; }
+  /* No z-index here: a stacking context would make the highlights blend with nothing and veil the text. */
+  .overlay { position: absolute; inset: 0; pointer-events: none; }
+  .sel { position: absolute; background: rgba(47, 91, 211, .24); mix-blend-mode: multiply; }
+  .region { position: absolute; border: 1px dashed var(--accent); background: rgba(47, 91, 211, .07); }
+
+  /* Zotero annotations, under the selection. Highlights are a light multiplied tint so text stays sharp. */
+  .anns { position: absolute; inset: 0; }
+  .ann { position: absolute; }
+  .ann.hl { background: var(--c); opacity: .42; mix-blend-mode: multiply; }
+  .ann.hl.active { opacity: .55; }
+  .ann.ul::after { content: ''; position: absolute; left: 0; right: 0; bottom: -1px; height: 1.5px; background: var(--c); }
+  .ann.ul.active { background: var(--c); opacity: .2; mix-blend-mode: multiply; }
+  .ann.img { border: 1.5px solid var(--c); }
+  .ann.txt { border: 1px dashed var(--c); }
+  .ann.note { background: var(--c); border-radius: 2px; box-shadow: 0 0 0 1px rgba(0, 0, 0, .2); }
+  .ann.mark { border-radius: 50%; background: var(--c); }
+  .ann.active:is(.img, .txt, .note, .mark) { outline: 2px solid var(--c); outline-offset: 2px; }
+  .ann.ink { inset: 0; width: 100%; height: 100%; overflow: visible; }
+
+  /* Selection toolbar: appears only for a selection; clicking it never clears the selection. */
+  #toolbar { position: absolute; z-index: 4; display: flex; align-items: center; gap: 2px; padding: 3px;
+    background: var(--bg); border: 1px solid var(--line); border-radius: 6px; }
+  #toolbar button { padding: 3px 9px; border-radius: 4px; }
+  #toolbar button:hover { background: var(--hover); }
+  #toolbar button.primary { color: var(--accent); font-weight: 600; }
+  #askInput { width: min(320px, 70vw); font: inherit; color: var(--text); background: var(--bg); border: 0; outline: none; padding: 3px 6px; }
+  #toolbarNote { color: var(--muted); padding: 0 6px; }
+
+  /* Annotation popup: opens on a click on an annotation; edits are saved as they are made. */
+  #annPopup { position: absolute; z-index: 4; width: min(320px, calc(100vw - 8px)); background: var(--bg); border: 1px solid var(--line); border-radius: 6px; padding: 6px; }
+  #annPopup .row { display: flex; align-items: center; gap: 4px; }
+  #annPopup .spacer { flex: 1; }
+  #annColors { display: flex; gap: 2px; }
+  #annColors button { width: 22px; height: 22px; border-radius: 4px; display: grid; place-items: center; }
+  #annColors button:hover { background: var(--hover); }
+  #annColors button::before { content: ''; width: 12px; height: 12px; border-radius: 50%; background: var(--c); }
+  #annColors button.on { box-shadow: inset 0 0 0 1.5px var(--text); }
+  #annDelete { padding: 2px 7px; border-radius: 4px; color: var(--muted); }
+  #annDelete:hover { background: var(--hover); color: var(--text); }
+  #annCommentView { margin-top: 6px; padding: 3px 6px; max-height: 50vh; overflow: auto; line-height: 1.55; cursor: text; border-radius: 4px; overflow-wrap: anywhere; }
+  #annCommentView:hover { background: var(--hover); }
+  #annCommentView.preview { border: 1px dashed var(--line); cursor: default; }
+  #annCommentView.preview:hover { background: none; }
+  /* Formulas (KaTeX) in comments; notes size them below. */
+  .katex { font-size: 1.08em; }
+  .katex-display { margin: .4em 0; overflow-x: auto; overflow-y: hidden; padding: 1px 0; }
+  /* Rendered comments (popup and drawer): compact Markdown. */
+  .md p, .md ul, .md ol, .md blockquote { margin: 0 0 .35em; }
+  .md > :last-child { margin-bottom: 0; }
+  .md ul, .md ol { padding-left: 1.3em; }
+  .md blockquote { padding-left: 8px; border-left: 2px solid var(--line); color: var(--muted); }
+  .md p.h { font-weight: 600; }
+  .md code { font: 12px ui-monospace, Menlo, monospace; background: var(--hover); padding: 0 3px; border-radius: 3px; }
+  .md a { color: var(--accent); }
+  #annMeta { color: var(--muted); font-size: 12px; margin: 4px 2px 0; }
+  #annMeta:empty { display: none; }
+  #annComment { display: block; width: 100%; margin-top: 6px; min-height: 26px; max-height: 40vh; resize: none; font: inherit; color: var(--text); background: var(--bg);
+    border: 1px solid var(--line); border-radius: 4px; padding: 3px 6px; outline: none; }
+  #annComment:focus { border-color: var(--accent); }
+
+  /* One thin bar over the paper; slides away while reading down. */
+  #bar { position: absolute; left: 0; right: 0; top: 0; height: var(--bar-h); z-index: 2; display: flex; align-items: center;
+    gap: 12px; padding: 0 10px; background: var(--bg); border-bottom: 1px solid var(--line);
+    transition: transform .16s ease; font-variant-numeric: tabular-nums; }
+  #bar.hidden { transform: translateY(-100%); }
+  /* Tabs: one per paper, the active one in bold (no colored blocks). */
+  #tabs { flex: 1; min-width: 0; display: flex; align-items: stretch; height: 100%; margin-left: -10px; }
+  .tab { position: relative; display: flex; align-items: center; gap: 4px; min-width: 56px; max-width: 220px; flex: 0 1 auto; padding: 0 6px 0 10px;
+    border-right: 1px solid var(--line); color: var(--muted); }
+  .tab span { overflow: hidden; white-space: nowrap; text-overflow: ellipsis; }
+  .tab.on { color: var(--text); font-weight: 600; }
+  .tab:hover { background: var(--hover); }
+  .tab i { font-style: normal; width: 16px; height: 16px; display: grid; place-items: center; border-radius: 3px; color: var(--muted); visibility: hidden; font-weight: 400; }
+  .tab:hover i, .tab.on i { visibility: visible; }
+  .tab i:hover { background: var(--line); color: var(--text); }
+  #newTab { width: 28px; color: var(--muted); font-size: 16px; }
+  #newTab:hover { background: var(--hover); color: var(--text); }
+
+  /* Home: a search box and the papers being read, nothing else. */
+  #home { position: absolute; inset: var(--bar-h) 0 0 0; z-index: 1; overflow: auto; background: var(--bg); padding: 24px max(16px, calc(50% - 300px)); }
+  #search { width: 100%; font: inherit; font-size: 15px; color: var(--text); background: var(--bg); border: 1px solid var(--line); border-radius: 6px; padding: 7px 10px; outline: none; }
+  #search:focus { border-color: var(--accent); }
+  #homeHeading { margin: 20px 0 6px; font-size: 12px; font-weight: 600; color: var(--muted); }
+  #homeList { list-style: none; margin: 0; padding: 0; }
+  #homeList li { padding: 7px 10px; margin: 0 -10px; border-radius: 4px; cursor: pointer; }
+  #homeList li.cur, #homeList li:hover { background: var(--hover); }
+  #homeList b { display: block; font-weight: 600; overflow: hidden; white-space: nowrap; text-overflow: ellipsis; }
+  #homeList small { color: var(--muted); font-size: 12px; }
+  #homeNote { color: var(--muted); }
+  #homeNote:empty { display: none; }
+
+  /* Find (⌘F): a small box under the bar; matches are tinted, the current one outlined. */
+  #findBar { position: absolute; top: calc(var(--bar-h) + 6px); right: 10px; z-index: 4; display: flex; align-items: center; gap: 2px; padding: 3px;
+    background: var(--bg); border: 1px solid var(--line); border-radius: 6px; }
+  #findInput { width: 180px; font: inherit; color: var(--text); background: var(--bg); border: 0; outline: none; padding: 2px 6px; }
+  #findCount { color: var(--muted); min-width: 52px; text-align: right; padding-right: 4px; font-variant-numeric: tabular-nums; }
+  #findBar button { width: 22px; height: 22px; border-radius: 4px; color: var(--muted); }
+  #findBar button:hover { background: var(--hover); color: var(--text); }
+  .finds { position: absolute; inset: 0; }
+  .hit { position: absolute; background: rgba(255, 180, 0, .3); mix-blend-mode: multiply; }
+  .hit.cur { background: rgba(255, 140, 0, .5); outline: 1.5px solid rgba(230, 120, 0, .9); }
+  /* Note tab: the Zotero note as a page of text, after the user's blog (Lora for Latin text, PingFang for
+     Chinese, crimson links, three-line tables); formulas are typeset with KaTeX. */
+  #noteView { position: absolute; inset: var(--bar-h) 0 0 0; z-index: 1; overflow: auto; background: var(--bg); color: var(--text);
+    padding: 30px max(20px, calc(50% - 360px)) 80px; font: 15px/1.75 "Lora", -apple-system, BlinkMacSystemFont, "PingFang SC", sans-serif;
+    --link: #e0491f; --link-hover: #f9493f; --quote-bg: #f4f3f0; --quote-bar: #c9c8c2; --rule: #8a8a85; --code: #286ee0; --code-bg: rgba(208, 187, 193, .2); --pre-bg: #f6f5f5; }
+  @media (prefers-color-scheme: dark) {
+    :root:not([data-theme="light"]) #noteView { --link: #ff7a52; --link-hover: #ff9a7a; --quote-bg: #262624; --quote-bar: #4a4a47; --rule: #77776f; --code: #8ab4ff; --code-bg: rgba(138, 180, 255, .12); --pre-bg: #262624; }
+  }
+  :root[data-theme="dark"] #noteView { --link: #ff7a52; --link-hover: #ff9a7a; --quote-bg: #262624; --quote-bar: #4a4a47; --rule: #77776f; --code: #8ab4ff; --code-bg: rgba(138, 180, 255, .12); --pre-bg: #262624; }
+  #noteView h1, #noteView h2, #noteView h3, #noteView h4 { line-height: 1.35; font-weight: 700; }
+  #noteView h1 { font-size: 23px; margin: 0 0 .35em; }
+  #noteView p.meta { color: var(--muted); font: 12.5px/1.6 -apple-system, BlinkMacSystemFont, "PingFang SC", sans-serif; margin-bottom: 1.8em; }
+  #noteView h2 { font-size: 19px; margin: 1.9em 0 .6em; }
+  #noteView h3 { font-size: 16.5px; font-weight: 600; margin: 1.5em 0 .45em; }
+  #noteView h4 { font-size: 15px; font-weight: 600; margin: 1.3em 0 .4em; }
+  #noteView > :first-child, #noteView > div > :first-child { margin-top: 0; }
+  #noteView p, #noteView ul, #noteView ol, #noteView blockquote, #noteView pre, #noteView table { margin: 0 0 .95em; }
+  #noteView ul, #noteView ol { padding-left: 1.5em; }
+  #noteView li { margin: .25em 0; }
+  #noteView li > p { margin: 0 0 .3em; }
+  #noteView strong, #noteView b { font-weight: 700; }
+  #noteView a { color: var(--link); text-decoration: none; }
+  #noteView a:hover { color: var(--link-hover); text-decoration: underline; text-underline-offset: 3px; }
+  #noteView blockquote { color: var(--muted); background: var(--quote-bg); border-left: 4px solid var(--quote-bar); padding: .6em 1em .6em 1.1em; border-radius: 0 4px 4px 0; }
+  #noteView blockquote > :last-child { margin-bottom: 0; }
+  #noteView code { color: var(--code); background: var(--code-bg); border-radius: 4px; padding: 1px 5px; font: .88em ui-monospace, Menlo, monospace; }
+  #noteView pre { overflow: auto; padding: 8px 12px; background: var(--pre-bg); border-radius: 4px; font: 12px/1.5 ui-monospace, Menlo, monospace; }
+  #noteView pre code { color: inherit; background: none; padding: 0; }
+  /* Three-line tables, as in papers. */
+  /* Centred like the blog; a table wider than the page scrolls sideways instead. */
+  #noteView table { border-collapse: collapse; display: block; overflow-x: auto; width: max-content; max-width: 100%; margin: 1.1em auto 1.3em; font-size: 14px;
+    border-top: 2px solid var(--rule); border-bottom: 2px solid var(--rule); }
+  #noteView th, #noteView td { padding: 4px 14px; vertical-align: top; text-align: left; }
+  #noteView th { font-weight: 700; text-align: center; border-bottom: 1.5px solid var(--rule); }
+  #noteView img { max-width: 100%; height: auto; }
+  #noteView .katex { font-size: 1.12em; }
+  #noteView .katex-display { margin: .8em 0; padding: 2px 0; }
+  /* Page references: small page tags (the note in Zotero keeps "[p.N]"). */
+  #noteView .pages { white-space: nowrap; margin-left: .2em; }
+  #noteView .pages a { display: inline-block; margin: 0 1px; padding: 0 5px; border-radius: 4px; background: var(--hover); color: var(--muted);
+    font: 11.5px/1.65 -apple-system, BlinkMacSystemFont, sans-serif; vertical-align: .08em; font-variant-numeric: tabular-nums; }
+  #noteView .pages a:hover { color: var(--link); text-decoration: none; }
+  #noteView .highlight { background: rgba(255, 212, 0, .28); cursor: pointer; }
+  #noteView .highlight:hover { background: rgba(255, 212, 0, .5); }
+  #noteView .citation { color: var(--muted); }
+  #noteView .missing { color: var(--muted); }
+  #tocList, #drawerNotes ol { list-style: none; margin: 0 -16px; padding: 0; }
+  #tocList li, #drawerNotes li { padding: 5px 16px; cursor: pointer; overflow: hidden; white-space: nowrap; text-overflow: ellipsis; }
+  #tocList li:hover, #drawerNotes li:hover { background: var(--hover); }
+  #tocList li[data-level="2"] { padding-left: 30px; } #tocList li[data-level="3"] { padding-left: 44px; color: var(--muted); }
+  #tocList li[data-level="4"], #tocList li[data-level="5"], #tocList li[data-level="6"] { padding-left: 58px; color: var(--muted); }
+  #drawerNotes { margin-bottom: 10px; }
+  #drawerNotes:empty { display: none; }
+  #drawerNotes h3 { margin: 0 0 4px; font-size: 12px; font-weight: 600; color: var(--muted); }
+  #drawerNotes .mapRow { padding: 4px 0 2px; color: var(--muted); }
+  #drawerNotes .mapRow small { display: block; }
+  #drawerNotes .mapRow button { color: var(--accent); }
+
+  /* Link preview: a picture of the link target while the pointer rests on the link. */
+  #linkPreview { position: absolute; z-index: 5; width: min(460px, calc(100vw - 8px)); background: #fff; border: 1px solid var(--line); border-radius: 6px; overflow: hidden; pointer-events: none; }
+  #linkPreview img { display: block; width: 100%; }
+  #linkPreview div { padding: 2px 8px; font-size: 12px; color: var(--muted); background: var(--bg); border-top: 1px solid var(--line); }
+  #back { color: var(--accent); padding: 2px 6px; border-radius: 3px; }
+  #back:hover { background: var(--hover); }
+  .flash { position: absolute; outline: 2px solid var(--accent); outline-offset: 2px; border-radius: 1px; }
+  #note { color: var(--muted); }
+  #bar .meta { color: var(--muted); padding: 2px 4px; border-radius: 3px; }
+  #bar .meta:hover { background: var(--hover); color: var(--text); }
+  #pageInput { width: 56px; font: inherit; color: var(--text); background: var(--bg); border: 1px solid var(--accent);
+    border-radius: 3px; padding: 0 4px; height: 20px; }
+  .icon { display: grid; place-items: center; width: 22px; height: 22px; border-radius: 3px; color: var(--muted); }
+  .icon:hover { background: var(--hover); color: var(--text); }
+
+  /* Drawers (settings, annotations): from the right, only when asked for. */
+  .drawer { position: absolute; top: 0; right: 0; bottom: 0; width: min(300px, 86vw); z-index: 3; background: var(--bg);
+    border-left: 1px solid var(--line); padding: 0 16px; overflow: auto; }
+  .drawer header { position: sticky; top: 0; z-index: 1; background: var(--bg); display: flex; align-items: center; gap: 8px; height: var(--bar-h);
+    border-bottom: 1px solid var(--line); margin: 0 -16px 12px; padding: 0 10px 0 16px; }
+  .drawer header h2 { flex: 1; margin: 0; font-size: 13px; font-weight: 600; }
+  .drawer header span { color: var(--muted); }
+
+  #annDrawer { width: min(340px, 90vw); }
+  #drawerFilter { display: flex; flex-wrap: wrap; gap: 2px 4px; margin: -4px 0 8px; }
+  #drawerFilter button { height: 22px; padding: 0 6px; border-radius: 4px; color: var(--muted); white-space: nowrap; }
+  #drawerFilter button:hover { background: var(--hover); }
+  #drawerFilter button.on { color: var(--text); font-weight: 600; box-shadow: inset 0 0 0 1px var(--line); }
+  #drawerFilter button.dot::before { content: ''; display: inline-block; width: 8px; height: 8px; margin-right: 4px; border-radius: 50%; background: var(--c); vertical-align: 0; }
+  #drawerWrites:empty, #drawerNote:empty { display: none; }
+  #drawerWrites { border: 1px solid var(--line); border-radius: 6px; padding: 6px 8px; margin-bottom: 10px; }
+  #drawerWrites div { padding: 4px 0; }
+  #drawerWrites div + div { border-top: 1px solid var(--line); }
+  #drawerWrites small { display: block; color: var(--muted); }
+  #drawerWrites button { color: var(--accent); margin-right: 10px; }
+  #drawerNote { color: var(--muted); margin-bottom: 8px; }
+  #drawerList { list-style: none; margin: 0 -16px; padding: 0; }
+  #drawerList > li { display: grid; grid-template-columns: 3px 1fr auto; gap: 0 9px; padding: 7px 16px; cursor: pointer; border-bottom: 1px solid var(--line); }
+  #drawerList > li:hover { background: var(--hover); }
+  #drawerList > li::before { content: ''; grid-row: 1 / span 2; background: var(--c); border-radius: 2px; }
+  #drawerList .t { display: -webkit-box; -webkit-line-clamp: 3; -webkit-box-orient: vertical; overflow: hidden; }
+  #drawerList .p { color: var(--muted); font-variant-numeric: tabular-nums; }
+  /* Only the entries themselves: a list inside a rendered comment keeps ordinary list styling. */
+  #drawerList .c { grid-column: 2 / span 2; color: var(--muted); display: -webkit-box; -webkit-line-clamp: 4; -webkit-box-orient: vertical; overflow: hidden; }
+  #drawerList .c:empty { display: none; }
+  #settings { width: min(380px, 92vw); padding-bottom: 24px; }
+  #settings h3 { margin: 18px 0 6px; font-size: 12px; font-weight: 600; color: var(--muted); }
+  #settings h3:first-of-type { margin-top: 4px; }
+  #settings .hint { margin: 0 0 6px; color: var(--muted); font-size: 12px; }
+  #settings .note { margin: 4px 0 0; color: #c0392b; font-size: 12px; }
+  #settings .note:empty { display: none; }
+  #settings .row { display: flex; align-items: center; gap: 8px; margin-top: 4px; }
+  #settings .spacer { flex: 1; }
+  #settings .link { color: var(--accent); }
+  #settings label.radio { display: grid; grid-template-columns: 18px 1fr; gap: 2px 6px; padding: 8px 0; border-bottom: 1px solid var(--line); cursor: pointer; }
+  #settings label.radio span:first-of-type { font-weight: 600; }
+  #settings label.radio small { grid-column: 2; color: var(--muted); font-size: 12px; }
+  #settings label.radio input { margin: 2px 0 0; accent-color: var(--accent); }
+  #paletteList, #keyList { list-style: none; margin: 0; padding: 0; }
+  #paletteList li { display: grid; grid-template-columns: 14px 24px 1fr 20px; align-items: center; gap: 6px; padding: 3px 0; }
+  #paletteList .n { color: var(--muted); font-variant-numeric: tabular-nums; text-align: right; }
+  #paletteList .sw { width: 20px; height: 20px; border-radius: 50%; background: var(--c); box-shadow: inset 0 0 0 1px rgba(0,0,0,.15); }
+  #paletteList input[type=text] { min-width: 0; font: inherit; color: var(--text); background: var(--bg); border: 1px solid var(--line); border-radius: 4px; padding: 2px 6px; }
+  #paletteList .del { color: var(--muted); }
+  #paletteList .del:hover { color: var(--text); }
+  #swatches { position: absolute; z-index: 5; display: grid; grid-template-columns: repeat(4, 22px); gap: 6px; padding: 8px; background: var(--bg); border: 1px solid var(--line); border-radius: 6px; }
+  #swatches button:disabled { opacity: .25; cursor: default; }
+  #swatches button { width: 22px; height: 22px; border-radius: 50%; background: var(--c); box-shadow: inset 0 0 0 1px rgba(0,0,0,.15); }
+  #keyList li { display: flex; align-items: center; gap: 8px; padding: 3px 0; border-bottom: 1px solid var(--line); }
+  #keyList li span { flex: 1; }
+  #keyList button { min-width: 72px; padding: 1px 8px; border: 1px solid var(--line); border-radius: 4px; font-variant-numeric: tabular-nums; }
+  #keyList button.capturing { border-color: var(--accent); color: var(--accent); }
+  #settings label.field { display: flex; align-items: center; gap: 8px; margin-bottom: 6px; }
+  #settings label.field input, #settings label.field select { flex: 1; font: inherit; color: var(--text); background: var(--bg); border: 1px solid var(--line); border-radius: 4px; padding: 2px 6px; }
+  #mapPrompt, #noteTemplate { width: 100%; font: 12px/1.5 ui-monospace, Menlo, monospace; color: var(--text); background: var(--bg); border: 1px solid var(--line); border-radius: 4px; padding: 6px; resize: vertical; }
+
+  #message { position: absolute; inset: 0; z-index: 1; display: grid; place-content: center; gap: 10px; text-align: center;
+    color: var(--muted); background: var(--bg); padding: 16px; }
+  #retry { color: var(--accent); }
+  #debug { position: absolute; left: 0; right: 0; bottom: 0; z-index: 2; padding: 3px 10px; background: var(--bg);
+    border-top: 1px solid var(--line); color: var(--muted); font: 11px/1.4 ui-monospace, Menlo, monospace; white-space: nowrap; overflow: hidden; }
+</style>
+</head>
+<body>
+<div id="scroller" tabindex="-1"><div id="content"></div></div>
+
+<div id="bar" hidden>
+  <div id="tabs" role="tablist"></div>
+  <span id="note" hidden title="该 PDF 含旋转或非零原点页面，显示可能不准确">⚠︎</span>
+ <button id="back" hidden title="返回跳转前的位置（⌘[）"></button>
+  <button id="pageLabel" class="meta" title="跳页（G）"></button>
+  <input id="pageInput" type="number" min="1" hidden aria-label="页码">
+  <button id="zoomLabel" class="meta" title="适应宽度（0）"></button>
+  <button id="annButton" class="icon" title="批注（A）" aria-label="批注">
+    <svg width="14" height="14" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.4" aria-hidden="true">
+      <path d="M2 3.5h12M2 8h7M2 12.5h12"/><path d="M11 6.5h3v3h-3z" fill="currentColor" stroke="none"/>
+    </svg>
+  </button>
+  <button id="settingsButton" class="icon" title="设置（⌘,）" aria-label="设置">
+    <svg width="14" height="14" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.4" aria-hidden="true">
+      <path d="M2 4h12M2 12h12"/><circle cx="6" cy="4" r="1.6" fill="var(--bg)"/><circle cx="10.5" cy="12" r="1.6" fill="var(--bg)"/>
+    </svg>
+  </button>
+</div>
+
+<aside id="annDrawer" class="drawer" hidden aria-label="批注">
+  <header><h2>批注</h2><span id="drawerCount"></span><button id="drawerClose" aria-label="关闭">✕</button></header>
+  <div id="drawerNotes"></div>
+  <div id="drawerFilter"></div>
+  <div id="drawerNote"></div>
+  <div id="drawerWrites"></div>
+  <ol id="drawerList"></ol>
+</aside>
+
+<aside id="tocDrawer" class="drawer" hidden aria-label="目录">
+  <header><h2>目录</h2><button id="tocClose" aria-label="关闭">✕</button></header>
+  <ol id="tocList"></ol>
+</aside>
+
+<aside id="settings" class="drawer" hidden aria-label="设置">
+  <header><h2>设置</h2><button id="settingsClose" aria-label="关闭">✕</button></header>
+  <h3>渲染方式</h3>
+  <label class="radio"><input type="radio" name="renderMode" value="aligned"><span>像素对齐 + 近灰加深</span>
+    <small>最锐利，字更有分量。默认。</small></label>
+  <label class="radio"><input type="radio" name="renderMode" value="rounded"><span>0.5 档渲染</span>
+    <small>边缘略柔和；调整面板宽度时可复用已渲染的页面。</small></label>
+
+  <h3>批注颜色与标签</h3>
+  <p class="hint">按键 1–9 依次对应；H 用第一种。标签为「问答」的那一行，是 Codex 把问答存为批注时用的颜色（没有这一行时用紫色）。改动只影响以后的批注。</p>
+  <ol id="paletteList"></ol>
+  <div class="row"><button id="paletteAdd" class="link">＋ 添加</button><span class="spacer"></span><button id="paletteReset" class="link">恢复默认</button></div>
+  <p id="paletteNote" class="note"></p>
+  <div id="swatches" hidden></div>
+
+  <h3>快捷键</h3>
+  <p class="hint">点击一项后按下新的组合键；Esc 取消。1–9、Esc、⌘C、⌘1–9 固定不可改。</p>
+  <ol id="keyList"></ol>
+  <div class="row"><span class="spacer"></span><button id="keysReset" class="link">恢复默认</button></div>
+  <p id="keysNote" class="note"></p>
+
+  <h3>论文地图</h3>
+  <p class="hint">只在你要求时生成。提示词之后会附上结构索引与逐页全文。</p>
+  <label class="field"><span>模型</span><input id="mapModel" type="text" placeholder="gpt-6.1-sol" spellcheck="false"></label>
+  <label class="field"><span>推理强度</span><select id="mapEffort"><option value="">中（默认）</option><option value="low">低：更快</option><option value="high">高：更慢，更细</option></select></label>
+  <textarea id="mapPrompt" rows="12" spellcheck="false" aria-label="论文地图提示词"></textarea>
+  <div class="row"><span class="spacer"></span><button id="mapReset" class="link">恢复默认提示词</button></div>
+  <p id="mapNote" class="note"></p>
+
+  <h3>精读问题</h3>
+  <p class="hint">你让 Codex"带我读这篇"时，它带着这些问题一步步引导你读；每读完一个问题记入这篇论文的"精读笔记"，问题都读完，论文就读完了。## 是分组，### 是问题标题，下面一段是问题全文；没有问题的分组由讨论展开。</p>
+  <textarea id="noteTemplate" rows="14" spellcheck="false" aria-label="精读问题"></textarea>
+  <div class="row"><span class="spacer"></span><button id="noteReset" class="link">恢复默认问题</button></div>
+  <p id="noteNote" class="note"></p>
+</aside>
+
+<div id="toolbar" hidden>
+  <button id="ask" class="primary" title="把选段和原图发到对话里提问">提问</button>
+  <button id="highlight" title="高亮（H；数字键换颜色，加 ⇧ 为下划线）">高亮</button>
+  <button id="comment" title="高亮并写评论">评论</button>
+  <input id="askInput" hidden placeholder="针对这段提问，回车发送" aria-label="问题">
+  <span id="toolbarNote" hidden></span>
+</div>
+
+<article id="noteView" tabindex="-1" hidden></article>
+
+<section id="home" hidden>
+  <input id="search" type="search" placeholder="搜索 Zotero：标题、作者、年份" autocomplete="off" spellcheck="false" aria-label="搜索 Zotero">
+  <h3 id="homeHeading">在读</h3>
+  <ol id="homeList"></ol>
+  <p id="homeNote"></p>
+</section>
+
+<div id="findBar" hidden>
+  <input id="findInput" placeholder="在本文中查找" aria-label="查找" autocomplete="off" spellcheck="false">
+  <span id="findCount"></span>
+  <button id="findPrev" title="上一个（⇧回车）" aria-label="上一个">↑</button>
+  <button id="findNext" title="下一个（回车）" aria-label="下一个">↓</button>
+  <button id="findClose" title="关闭（Esc）" aria-label="关闭">✕</button>
+</div>
+
+<div id="linkPreview" hidden><img alt=""><div id="linkPreviewLabel"></div></div>
+
+<div id="annPopup" hidden>
+  <div class="row">
+    <span id="annColors"></span>
+    <span class="spacer"></span>
+    <button id="annDelete" title="删除（⌘Z 撤销）">删除</button>
+  </div>
+  <div id="annMeta"></div>
+  <textarea id="annComment" rows="1" placeholder="评论（支持 Markdown 与 $公式$）" aria-label="评论"></textarea>
+  <div id="annCommentView" class="md" hidden title="点击编辑"></div>
+</div>
+
+<div id="message"><span id="messageText">正在启动…</span><button id="retry" hidden>重试</button></div>
+<div id="debug" hidden></div>
+<script>/* BUNDLED_APP */</script>
+</body>
+</html>

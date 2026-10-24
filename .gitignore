@@ -1,0 +1,25 @@
+.DS_Store
+node_modules/
+dist/
+build/
+.venv/
+__pycache__/
+*.pyc
+.env
+.env.*
+!.env.example
+.local/
+.cache/
+private/
+test-output/
+*.log
+*.sqlite
+*.sqlite-*
+coverage/
+
+# Spike and experiment outputs (renders of private PDFs)
+experiments/**/out/
+spikes/**/out/
+
+# Build output (machine-specific install paths)
+/out/
