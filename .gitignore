@@ -17,9 +17,6 @@ test-output/
 *.sqlite-*
 coverage/
 
-# Spike and experiment outputs (renders of private PDFs)
-experiments/**/out/
-spikes/**/out/
 
 # Build output (machine-specific install paths)
 /out/

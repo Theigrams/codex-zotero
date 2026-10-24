@@ -14,7 +14,7 @@ test('aligned: bitmap is exactly CSS width × DPR and shown 1:1', () => {
 });
 
 test('aligned matches the render-compare reference sizes', () => {
-  // experiments/render-compare: 900 CSS px at DPR 2 → 1800×2400, 1026 → 2052×2736.
+  // Blind-test renders: 900 CSS px at DPR 2 → 1800×2400, 1026 → 2052×2736.
   assert.deepEqual([pagePlan('aligned', 900, 2, A4).bitmapW, pagePlan('aligned', 900, 2, A4).bitmapH], [1800, 2400]);
   assert.deepEqual([pagePlan('aligned', 1026, 2, A4).bitmapW, pagePlan('aligned', 1026, 2, A4).bitmapH], [2052, 2736]);
 });
