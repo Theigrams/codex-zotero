@@ -6,6 +6,12 @@
 
 所有批注、笔记都写回 Zotero，插件自己只在本机保存阅读位置和设置。
 
+![在 Codex 中阅读 Zotero 论文：左边是对话，右边是阅读器](docs/images/reader.png)
+
+*对 Codex 说"把摘要中的核心句子高亮出来"，它读完摘要，直接在论文上标出四句并写回 Zotero。*
+
+详细用法见 [使用指南](docs/USAGE.md)。
+
 ## 功能
 
 **阅读**
@@ -55,6 +61,9 @@ npm run install-plugin
 安装脚本会编译辅助程序、找到装了 PyMuPDF 的 Python、把笔记与公式用的字体（KaTeX、Lora）装进 `~/Library/Fonts`，并把插件注册到 Codex。每一步的说明、验证方法和常见问题见 [INSTALL.md](INSTALL.md)；也可以把 INSTALL.md 交给你的 agent，让它照着装。
 
 ## 使用
+
+完整说明见 [docs/USAGE.md](docs/USAGE.md)，下面是最常用的几项。
+
 
 - 打开论文：对 Codex 说"打开那篇关于……的论文"，或在阅读器首页搜索。
 - 设置：⌘,（渲染方式、批注颜色与标签、快捷键、论文地图的模型 / 推理强度 / 提示词、精读问题）。
