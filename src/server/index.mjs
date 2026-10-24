@@ -38,7 +38,10 @@ const documents = new Documents({
 const renderer = new Renderer(pool);
 const stateRoot = process.env.CODEX_ZOTERO_STATE || join(homedir(), '.codex', 'codex-zotero');
 const state = new State(stateRoot);
-const annotations = new Annotations({ root: stateRoot, palette: async () => (await state.prefs()).palette });
+// CODEX_ZOTERO_FAST=1 (the browser preflight only): shorter waits everywhere, so the checks need not sit through
+// the real 3-second polls and 2-second retry backoff.
+const FAST = process.env.CODEX_ZOTERO_FAST === '1';
+const annotations = new Annotations({ root: stateRoot, palette: async () => (await state.prefs()).palette, ...(FAST ? { backoff: [200, 500, 1500, 3000, 6000] } : {}) });
 // MuPDF text repair reuses the PyMuPDF environment the 0.12.0 prototype installed on this machine.
 const text = new TextService({
   pool, script: join(here, 'text_server.py'),
@@ -172,7 +175,7 @@ const appTools = {
         error = e.message;
       }
     }
-    return { prefs: await state.prefs(), ...view, active, error, navSeq: nav.seq };
+    return { prefs: await state.prefs(), ...view, active, error, navSeq: nav.seq, ...(FAST ? { timing: { navPollMs: 200, annotationsPollMs: 300, mapPollMs: 300 } } : {}) };
   },
   async panel_poll({ instance, seen = 0 }) {
     const superseded = activeInstance !== null && instance !== activeInstance;

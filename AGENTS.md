@@ -23,11 +23,13 @@ npm install
 npm test                                  # 单元测试（node --test），不需要 Zotero
 npm run build                             # 构建到 out/，不安装
 npm run install-plugin                    # 构建并安装到 Codex
-node test/preflight.mjs --pdf PAPER.pdf   # 浏览器预检：用本机 Chrome、假 Zotero、隔离状态目录，不碰真实文库
+node test/preflight.mjs --pdf PAPER.pdf   # 浏览器预检：用本机 Chrome、假 Zotero、隔离状态目录，不碰真实文库（约 40 秒）
+node test/preflight.mjs --pdf PAPER.pdf --quick   # 只做功能检查，跳过滚动帧率与清晰时间的测量（约 30 秒）
 ```
 
 - 预检需要 `/Applications/Google Chrome.app`。其中一部分检查依赖开发时使用的那篇论文的具体文字（CAD 2024, "Accurate Detection and Smoothness-Oriented Avoidance Method of Singularity in 5-Axis CNC Machining"）；换别的 PDF 时，这些检查会失败，其余检查仍然有效。
-- 改动后跑 `npm test`；改了面板或服务端的行为，再跑预检。
+- 改动后跑 `npm test`；改了面板或服务端的行为，再跑 `--quick` 预检；改了渲染、滚动或缩放，跑完整预检。
+- 预检给服务端设置 `CODEX_ZOTERO_FAST=1`：面板轮询与写入重试的间隔缩短，检查不必等真实的 3 秒轮询。正常使用时不要设置它。
 
 ## 约定
 

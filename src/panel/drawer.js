@@ -1,6 +1,7 @@
 // The annotation drawer (A): this paper's annotations by position, filtered by tag; click to jump.
 // Writes that could not be saved show here and only here.
 import { renderComment } from './mathtext.js';
+import { timing } from './timing.js';
 
 const $ = id => document.getElementById(id);
 const KIND = { image: '区域（图或公式）', note: '便签', ink: '手绘', text: '文字框' };
@@ -75,7 +76,7 @@ export class AnnotationDrawer {
       this.notes = r.notes;
       this.map = r.map;
       this.render();
-      if (r.map?.status === 'running') this.mapTimer = setTimeout(() => this.loadNotes(), 3000);
+      if (r.map?.status === 'running') this.mapTimer = setTimeout(() => this.loadNotes(), timing.mapPollMs);
     }).catch(() => {});
   }
 

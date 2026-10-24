@@ -1,5 +1,6 @@
 // Browser preflight of the built panel (standalone server, system Chrome, DPR 2, isolated state).
-//   node test/preflight.mjs --pdf /path/to/paper.pdf [--out DIR] [--headful]
+//   node test/preflight.mjs --pdf /path/to/paper.pdf [--out DIR] [--headful] [--quick]
+// --quick skips the performance measurements (scroll frame rate, sharpness after scroll and zoom).
 // Checks the reading core end to end and prints indicative numbers. Not a substitute for the real Codex panel.
 import puppeteer from 'puppeteer-core';
 import { execFileSync, spawn } from 'node:child_process';
@@ -36,6 +37,7 @@ const env = {
   ...process.env, CODEX_ZOTERO_STATE: join(sandbox, 'state'), CODEX_ZOTERO_CACHE: join(sandbox, 'cache'), CODEX_ZOTERO_API: zotero.url,
   CODEX_ZOTERO_CODEX: new URL('./fake-codex.mjs', import.meta.url).pathname, // paper maps without calling a real model
   CODEX_ZOTERO_PYTHON: pythonWithPyMuPDF(), // as install.mjs finds it
+  CODEX_ZOTERO_FAST: '1', // short polls and retry backoff: the checks need not sit through the real waits
 };
 
 const server = spawn(process.execPath, ['out/plugin/dist/server.mjs', '--standalone', '--item', 'PAPER001'], { env, stdio: ['ignore', 'ignore', 'pipe'] });
@@ -50,8 +52,25 @@ const url = await new Promise((resolve, reject) => {
 });
 
 const sleep = ms => new Promise(r => setTimeout(r, ms));
+// Polls fn until it returns something truthy (returned) or ms pass (null).
+const until = async (fn, ms = 6000) => {
+  const t0 = Date.now();
+  while (Date.now() - t0 < ms) {
+    const v = await fn();
+    if (v) return v;
+    await sleep(50);
+  }
+  return null;
+};
+const QUICK = process.argv.includes('--quick');
+const startedAt = Date.now();
 const checks = [];
-const check = (name, ok, detail = '') => checks.push({ name, ok: !!ok, detail });
+let lastCheck = Date.now();
+// Each check records how long it took since the previous one, so slow stretches show in the report.
+const check = (name, ok, detail = '') => {
+  checks.push({ name, ok: !!ok, detail, ms: Date.now() - lastCheck });
+  lastCheck = Date.now();
+};
 
 const browser = await puppeteer.launch({
   executablePath: '/Applications/Google Chrome.app/Contents/MacOS/Google Chrome',
@@ -104,8 +123,13 @@ try {
   check('margins cropped', layout.cropW < layout.pageW, `${layout.cropW.toFixed(1)} of ${layout.pageW}pt`);
   await page.screenshot({ path: `${outDir}/1-open.png` });
 
-  // 2. Scroll: steady, then flicks.
-  await page.evaluate(async () => {
+  // 2. Scroll: steady, then flicks (measured; --quick only checks that the page label follows).
+  if (QUICK) {
+    await page.evaluate(() => { window.__reader.scroller.scrollTop += 3000; });
+    await sleep(200);
+    await page.evaluate(() => { window.__reader.scroller.scrollTop -= 800; }); // scrolling up brings the bar back
+    await sleep(300);
+  } else await page.evaluate(async () => {
     const sc = window.__reader.scroller;
     const phase = (speed, ms) => new Promise(done => {
       const start = performance.now();
@@ -122,31 +146,36 @@ try {
     await phase(-6000, 1000); await new Promise(r => setTimeout(r, 900));
   });
   const scroll = await metrics();
-  check('scroll 60fps', scroll.fps >= 58 && scroll.over20msPct < 2, JSON.stringify(scroll));
-  check('sharp after scroll ≤ 150ms (p50)', scroll.sharpAfterScroll.p50 !== null && scroll.sharpAfterScroll.p50 <= 150, JSON.stringify(scroll.sharpAfterScroll));
+  if (!QUICK) {
+    check('scroll 60fps', scroll.fps >= 58 && scroll.over20msPct < 2, JSON.stringify(scroll));
+    check('sharp after scroll ≤ 150ms (p50)', scroll.sharpAfterScroll.p50 !== null && scroll.sharpAfterScroll.p50 <= 150, JSON.stringify(scroll.sharpAfterScroll));
+  }
   check('page label follows', /^\d+ \/ \d+$/.test((await bar()).page), (await bar()).page);
 
   // 3. Pinch zoom (ctrl+wheel) twice, then keyboard fit width.
   const cdp = await page.createCDPSession();
-  for (let round = 0; round < 2; round++) {
+  for (let round = 0; round < (QUICK ? 1 : 2); round++) {
     for (let i = 0; i < 6; i++) {
       await cdp.send('Input.dispatchMouseEvent', { type: 'mouseWheel', x: 400, y: 500, deltaX: 0, deltaY: -10, modifiers: 2 });
       await sleep(16);
     }
-    await sleep(1200);
+    await sleep(QUICK ? 400 : 1200);
   }
   const zoomed = await metrics();
-  check('sharp after zoom ≤ 200ms (p50)', zoomed.sharpAfterZoom.n > 0 && zoomed.sharpAfterZoom.p50 <= 200, JSON.stringify(zoomed.sharpAfterZoom));
+  if (!QUICK) check('sharp after zoom ≤ 200ms (p50)', zoomed.sharpAfterZoom.n > 0 && zoomed.sharpAfterZoom.p50 <= 200, JSON.stringify(zoomed.sharpAfterZoom));
   check('zoom label updates', (await bar()).zoom !== '100%', (await bar()).zoom);
   await page.screenshot({ path: `${outDir}/2-zoomed.png` });
   await page.keyboard.press('0');
-  await sleep(800);
+  await until(async () => (await bar()).zoom === '100%', 3000);
   check('0 returns to fit width', (await bar()).zoom === '100%', (await bar()).zoom);
 
   // 4. Render mode switch through the settings drawer.
   await page.click('#settingsButton');
   await page.click('input[value="rounded"]');
-  await sleep(1200);
+  await until(() => page.evaluate(() => {
+    const L = window.__reader.layout[0];
+    return L.plan.mode === 'rounded' && [...document.querySelectorAll('.page img:not(.preview)')].some(i => i.naturalWidth === L.plan.bitmapW);
+  }), 5000);
   const rounded = await page.evaluate(() => {
     const L = window.__reader.layout[0];
     const widths = [...document.querySelectorAll('.page img:not(.preview)')].map(i => i.naturalWidth);
@@ -160,10 +189,10 @@ try {
 
   // 5. Crop toggle.
   await page.keyboard.press('c');
-  await sleep(1000);
+  await until(() => page.evaluate(() => window.__reader.crop === false), 3000);
   const uncropped = await page.evaluate(() => window.__reader.crop);
   await page.keyboard.press('c');
-  await sleep(600);
+  await until(() => page.evaluate(() => window.__reader.crop === true), 3000);
   check('C toggles the original page', uncropped === false && (await page.evaluate(() => window.__reader.crop)) === true);
 
   // 6. Jump with G, wait for the position save, reload, expect the same page.
@@ -231,15 +260,6 @@ try {
   check('Esc clears the selection', await page.evaluate(() => window.__selection.current === null && document.getElementById('toolbar').hidden));
 
   // 7b. Annotations: drawn where Zotero has them, created with H / ⇧3, edited in the popup, listed in the drawer.
-  const until = async (fn, ms = 6000) => {
-    const t0 = Date.now();
-    while (Date.now() - t0 < ms) {
-      const v = await fn();
-      if (v) return v;
-      await sleep(50);
-    }
-    return null;
-  };
   const stored = () => zotero.annotations().filter(a => !a.data.deleted);
   await page.evaluate(() => window.__reader.scrollToPage(1));
   await sleep(800);
@@ -666,8 +686,7 @@ try {
   const second = await browser.newPage();
   await second.goto(url);
   await second.waitForFunction(() => window.__reader?.metrics.openSharpMs != null, { timeout: 20000 });
-  await sleep(2500);
-  const superseded = await page.$eval('#messageText', el => el.textContent);
+  const superseded = await until(() => page.$eval('#messageText', el => el.textContent.includes('新的面板') && el.textContent), 6000) || await page.$eval('#messageText', el => el.textContent);
   check('older panel steps aside', superseded.includes('新的面板'), superseded);
 
   check('no page errors', errors.length === 0, errors.join(' | '));
@@ -676,7 +695,8 @@ try {
 } catch (e) {
   check('preflight ran to the end', false, e.message);
 } finally {
-  for (const c of checks) console.log(`${c.ok ? 'ok  ' : 'FAIL'} ${c.name}${c.detail ? `  — ${c.detail}` : ''}`);
+  for (const c of checks) console.log(`${c.ok ? 'ok  ' : 'FAIL'} ${String(((c.ms ?? 0) / 1000).toFixed(1)).padStart(5)}s ${c.name}${c.detail ? `  — ${c.detail}` : ''}`);
+  console.log(`total ${((Date.now() - startedAt) / 1000).toFixed(0)}s`);
   process.exitCode = checks.every(c => c.ok) ? 0 : 1;
   await browser.close();
   server.kill();

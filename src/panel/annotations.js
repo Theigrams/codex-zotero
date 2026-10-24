@@ -2,8 +2,8 @@
 // hit-tested here, and changed through the server's write queue: every change shows at once and is
 // written to Zotero in the background. Failed writes only show in the annotation drawer.
 import { QA_TAG } from '../shared/annotations.mjs';
+import { timing } from './timing.js';
 
-const POLL_MS = 3000;
 const HIT_PT = 1.5;
 
 const area = ([, , w, h]) => w * h;
@@ -36,7 +36,7 @@ export class AnnotationLayer {
     const doc = this.doc;
     if (!doc) return;
     if (document.visibilityState === 'visible') await this.refresh().catch(() => {});
-    if (this.doc === doc) this.timer = setTimeout(() => this.poll(), POLL_MS);
+    if (this.doc === doc) this.timer = setTimeout(() => this.poll(), timing.annotationsPollMs);
   }
 
   async refresh() {

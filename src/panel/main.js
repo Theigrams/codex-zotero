@@ -16,6 +16,7 @@ import { connect } from './host.js';
 import { Reader } from './reader.js';
 import { Selection } from './selection.js';
 import { Settings } from './settings.js';
+import { timing } from './timing.js';
 
 const $ = id => document.getElementById(id);
 const BAR = 28;
@@ -675,7 +676,7 @@ async function poll() {
       await follow(r.nav);
     }
   } catch { /* server restarting; try again */ }
-  setTimeout(poll, 1000);
+  setTimeout(poll, timing.navPollMs);
 }
 
 async function start() {
@@ -683,6 +684,7 @@ async function start() {
   try {
     const hello = await host.call('panel_hello', { instance });
     prefs = hello.prefs;
+    Object.assign(timing, hello.timing || {});
     keys = keymap(prefs.keys);
     tabs = hello.tabs;
     navSeen = hello.navSeq;
