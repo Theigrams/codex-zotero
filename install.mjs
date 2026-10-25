@@ -36,11 +36,11 @@ async function installFonts() {
 function findPython() {
   const candidate = process.env.CODEX_ZOTERO_PYTHON || 'python3';
   try {
-    const path = execFileSync(candidate, ['-c', 'import sys, pymupdf; print(sys.executable)'], { encoding: 'utf8', stdio: ['ignore', 'pipe', 'ignore'] }).trim();
+    const path = execFileSync(candidate, ['-c', 'import sys, pymupdf, fontTools; print(sys.executable)'], { encoding: 'utf8', stdio: ['ignore', 'pipe', 'ignore'] }).trim();
     console.log(`PyMuPDF found: ${path}`);
     return path;
   } catch {
-    console.log(`PyMuPDF not found for ${candidate}: text repair is off. Install it with "${candidate} -m pip install pymupdf" and run this again,`
+    console.log(`PyMuPDF not found for ${candidate}: text repair is off. Install it with "${candidate} -m pip install pymupdf fonttools" and run this again,`
       + ' or set CODEX_ZOTERO_PYTHON to a Python that has it.');
     return '';
   }

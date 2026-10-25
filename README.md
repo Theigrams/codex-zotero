@@ -45,7 +45,7 @@
 | Zotero | 测试于 Zotero 10.0.6；需要开启本地 API（设置 → 高级 → "允许此计算机上的其他应用程序与 Zotero 通信"） |
 | Xcode 命令行工具 | 编译 PDFKit 辅助程序（`swiftc`）：`xcode-select --install` |
 | Node.js 20+ 与 npm | 只在构建、安装时使用；插件运行用 Codex 自带的 Node |
-| Python 3 + PyMuPDF | 可选，用于修复 PDF 文字中的连字和符号：`python3 -m pip install pymupdf`。没有它也能用 |
+| Python 3 + PyMuPDF | 可选，用于修复 PDF 文字中的连字和符号：`python3 -m pip install pymupdf fonttools`。没有它也能用 |
 
 ## 安装
 

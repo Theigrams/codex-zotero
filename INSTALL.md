@@ -20,7 +20,7 @@ curl -s http://127.0.0.1:23119/connector/ping                        # Zotero �
 PDF 里的连字（fi、fl）和一些符号（Σ、Λ）常常取不出正确的文字。装了 PyMuPDF，插件会用它修复，选中的文字和发给 Codex 的原文更准确。不装也能用。
 
 ```bash
-python3 -m pip install pymupdf
+python3 -m pip install pymupdf fonttools
 python3 -c "import pymupdf; print(pymupdf.__version__)"
 ```
 

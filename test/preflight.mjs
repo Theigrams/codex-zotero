@@ -170,7 +170,11 @@ try {
   check('0 returns to fit width', (await bar()).zoom === '100%', (await bar()).zoom);
 
   // 4. Render mode switch through the settings drawer.
-  await page.click('#settingsButton');
+  // The toolbar can auto-hide after scrolling; the settings shortcut remains available.
+  await page.keyboard.down('Meta');
+  await page.keyboard.press(',');
+  await page.keyboard.up('Meta');
+  await page.waitForSelector('#settings:not([hidden])');
   await page.click('input[value="rounded"]');
   await until(() => page.evaluate(() => {
     const L = window.__reader.layout[0];
@@ -205,6 +209,11 @@ try {
   await page.waitForFunction(() => window.__reader?.metrics.openSharpMs != null, { timeout: 20000 });
   check('reading position restored after reload', (await bar()).page === before && before.startsWith('12'), `${before} → ${(await bar()).page}`);
 
+  // Installation checks accept any PDF; the full suite below uses its documented CAD fixture.
+  if (process.argv.includes('--installation')) {
+    const repaired = await page.evaluate(async () => (await window.__selection.textFor(1)).repaired);
+    check('installed Python text repair works', repaired);
+  } else {
   // 7. Selection: double-click a word, drag across lines, ⌥-drag a region, ask, context.
   await page.evaluate(() => window.__reader.scrollToPage(1));
   await sleep(1200);
@@ -689,11 +698,13 @@ try {
   const superseded = await until(() => page.$eval('#messageText', el => el.textContent.includes('新的面板') && el.textContent), 6000) || await page.$eval('#messageText', el => el.textContent);
   check('older panel steps aside', superseded.includes('新的面板'), superseded);
 
+  }
+
   check('no page errors', errors.length === 0, errors.join(' | '));
   const report = { checks, scroll, zoomed, layout, rounded };
   await writeFile(`${outDir}/report.json`, JSON.stringify(report, null, 1));
 } catch (e) {
-  check('preflight ran to the end', false, e.message);
+  check('preflight ran to the end', false, e.stack || e.message);
 } finally {
   for (const c of checks) console.log(`${c.ok ? 'ok  ' : 'FAIL'} ${String(((c.ms ?? 0) / 1000).toFixed(1)).padStart(5)}s ${c.name}${c.detail ? `  — ${c.detail}` : ''}`);
   console.log(`total ${((Date.now() - startedAt) / 1000).toFixed(0)}s`);
