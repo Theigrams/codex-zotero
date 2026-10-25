@@ -66,7 +66,7 @@ export function registerExtensions(server, { state, searchLibrary, prefsChanged,
     if (!papers.length || !(caps?.extensions?.['openai/elicitation']?.form || caps?.experimental?.['openai/elicitation']?.form)) return reply(fallback);
     const options = await mapLimit(papers,2,async p=>{
       let thumbnail; try { thumbnail=(await research.preview(p.itemKey,1)).image; } catch {}
-      return {uri:p.uri,name:p.title,title:p.title,mimeType:'application/pdf',description:[p.creators,p.year].filter(Boolean).join(' · '),
+      return {uri:p.uri,name:p.title,title:p.title,mimeType:'text/plain',description:[p.creators,p.year].filter(Boolean).join(' · '),
         _meta:{...(thumbnail?{'openai/thumbnail':{src:thumbnail,mimeType:'image/png'}}:{}),
           'openai/preview':{target:{type:'mcp_app_tool',name:'research_preview',arguments:{itemKey:p.itemKey}}}}};
     });
