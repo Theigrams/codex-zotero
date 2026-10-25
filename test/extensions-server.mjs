@@ -16,6 +16,9 @@ try{
  const {tools}=await client.listTools();
  for(const [name,type]of[['reader_library','global'],['reader_open','thread'],['reader_file','file']]) assert.equal(tools.find(t=>t.name===name)._meta['openai/ui'].entrypoints[0].type,type);
  assert.deepEqual(tools.find(t=>t.name==='reader_file')._meta['openai/ui'].entrypoints[0].extensions,['.pdf']);
+ const readerUri=tools.find(t=>t.name==='reader_open')._meta.ui.resourceUri;
+ const readerResource=(await client.readResource({uri:readerUri})).contents[0];
+ assert.deepEqual(readerResource._meta['openai/ui'],{availableDisplayModes:['inline','fullscreen'],preferredDisplayMode:'inline'});
  const settingsUri=tools.find(t=>t.name==='reader_settings')._meta.ui.resourceUri;
  assert.ok((await client.readResource({uri:settingsUri})).contents[0].text.includes('settings-only'));
  const denied=await client.callTool({name:'file_open',arguments:{}});assert.equal(denied.isError,true);
@@ -32,5 +35,5 @@ try{
  await client.callTool({name:'reader_open',arguments:{itemKey:'PAPER001'}});
  const reopened=await client.callTool({name:'file_open',arguments:{},_meta:{'openai/resource':{path:pdf}}});
  assert.equal(reopened.structuredContent.active.document.itemKey,'PAPER001','file viewer preserves known Zotero identity');
- console.log(JSON.stringify({pass:true,checks:['global/thread/PDF entrypoints','settings resource','file access requires host metadata','authorized PDF open','original file path','settings preserves reader','mentions','paper resource','file viewer preserves Zotero identity']}));
+ console.log(JSON.stringify({pass:true,checks:['default inline reader with fullscreen support','global/thread/PDF entrypoints','settings resource','file access requires host metadata','authorized PDF open','original file path','settings preserves reader','mentions','paper resource','file viewer preserves Zotero identity']}));
 }finally{await client.close();await transport.close();await zotero.close();await rm(root,{recursive:true,force:true});}

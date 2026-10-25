@@ -80,7 +80,7 @@ export class ContextBlocks {
     if (!s || !doc) return;
     const rect = [...this.selection.bounds()];
     const id = `${doc.id}:${s.page}:${rect.map(v => Math.round(v)).join(',')}`;
-    if (this.items.some(b => b.id === id)) return this.onNote('这一块已在上下文中');
+    if (this.items.some(b => b.id === id)) return true;
     if (this.items.length >= MAX_CONTEXT_BLOCKS) return this.onNote(`最多保留 ${MAX_CONTEXT_BLOCKS} 块，请先移除一些`);
     const item = { id, docId: doc.id, title: doc.title, itemKey: doc.itemKey, page: s.page, rect,
       type: s.block?.type || (s.kind === 'text' ? 'text' : 'region'), text: (s.text || '').slice(0, 6000), source: s.block?.textSource || 'original' };
@@ -93,6 +93,7 @@ export class ContextBlocks {
       item.contextNumber = this.nextNumber++;
       item.contextColor = this.pickColor();
       this.items.push(item); this.changed(); this.onNote('已加入上下文');
+      return true;
     } catch (e) { this.onNote(`加入失败：${e.message}`); }
     finally { this.adding = false; }
   }

@@ -441,8 +441,7 @@ function applyPrefs(next) {
 // ---------- selection toolbar ----------
 
 function onSelection(sel, final) {
-  if (!sel) closeAsk();
-  else popup.close();
+  if (sel) popup.close();
   placeToolbar();
   if (final) { blocks?.outline(null); contexts?.selectionChanged(); conversation.schedule(); }
 }
@@ -461,45 +460,6 @@ function placeToolbar() {
   const left = Math.max(4, Math.min(window.innerWidth - w - 4, (r.left + r.right) / 2 - w / 2));
   tb.style.top = `${top}px`;
   tb.style.left = `${left}px`;
-}
-
-function openAsk() {
-  $('addContext').hidden = true;
-  $('ask').hidden = true;
-  $('highlight').hidden = true;
-  $('comment').hidden = true;
-  $('toolbarNote').hidden = true;
-  $('askInput').hidden = false;
-  $('askActions').hidden = false;
-  $('askDraft').hidden = $('askTarget').hidden = !host.extensions?.message;
-  $('askTarget').value = 'active';
-  $('askInput').value = '';
-  placeToolbar();
-  $('askInput').focus();
-}
-
-function closeAsk() {
-  $('askInput').hidden = true;
-  $('askActions').hidden = true;
-  $('addContext').hidden = false;
-  $('ask').hidden = false;
-  $('highlight').hidden = false;
-  $('comment').hidden = false;
-  placeToolbar();
-}
-
-async function sendAsk(options = {}) {
-  const question = $('askInput').value;
-  if (conversation.sending) return;
-  for (const b of $('askActions').querySelectorAll('button')) b.disabled = true;
-  note('正在发送…');
-  try {
-    await conversation.ask(question, { target: $('askTarget').value, ...options });
-    closeAsk();
-    note(options.send === false ? '已放入草稿，尚未发送' : '已发送到对话');
-  } catch (e) {
-    note(`发送失败：${e.message}`);
-  } finally { for (const b of $('askActions').querySelectorAll('button')) b.disabled = false; }
 }
 
 // A short word in the toolbar itself; nothing pops up elsewhere.
@@ -521,7 +481,6 @@ function highlightSelection(color = palette()[0].color, type = 'highlight') {
     note('这篇 PDF 不是从 Zotero 打开的，批注无处保存');
     return Promise.resolve(null);
   }
-  closeAsk();
   const pending = annotations.create(sel, { color, type });
   selection.clear();
   return pending.catch(e => {
@@ -616,11 +575,6 @@ function onKey(e) {
   if (e.key === 'Alt') document.body.classList.add('alt');
   if (['annComment', 'findInput', 'search'].includes(e.target.id)) return; // these handle their own keys
   if (e.target.closest?.('#settings') && e.target.matches('input[type=text], input[type=password], textarea')) return;
-  if (e.target.id === 'askInput') {
-    if (e.key === 'Enter' && !e.isComposing) sendAsk();
-    if (e.key === 'Escape') closeAsk();
-    return;
-  }
   if (e.target.id === 'pageInput') {
     if (e.key === 'Enter') closePageInput(true);
     if (e.key === 'Escape') closePageInput(false);
@@ -826,9 +780,6 @@ async function main() {
     if ($('ocrPanel').hidden) { closeSettings(); ocr.open(); } else ocr.close();
     $('ocrButton').setAttribute('aria-expanded', String(!$('ocrPanel').hidden));
   });
-  $('ask').addEventListener('click', openAsk);
-  $('askSend').addEventListener('click', () => sendAsk());
-  $('askDraft').addEventListener('click', () => sendAsk({ send: false }));
   $('comment').addEventListener('click', commentSelection);
   $('highlight').addEventListener('click', () => highlightSelection());
   $('annButton').addEventListener('click', toggleDrawer);

@@ -225,7 +225,7 @@ test('background context contains a version and retrieval policy, never repeats 
  assert.doesNotMatch(fullTextContext('doc',{...descriptor,contextMode:'on-demand'}),/首次提问/);
 });
 
-test('panel questions flush the retrieval policy in background without inserting it into the visible message',async()=>{
+test('chat handoff publishes retrieval policy once without injecting full text or messages',async()=>{
  const {Conversation}=await import('../src/panel/conversation.js');
  const previous=globalThis.window;globalThis.window={};
  const events=[];
@@ -239,10 +239,11 @@ test('panel questions flush the retrieval policy in background without inserting
  try {
    conversation=new Conversation({host,reader,selection});
    conversation.setFullTextStatus('one',{complete:true,version:'v1',characters:100,settings:{contextMode:'first-question'}});
-   await conversation.ask('Explain this');await conversation.ask('Tell me more');
+   await conversation.continueInChat();await conversation.continueInChat();
    assert.equal(events[0].kind,'context');assert.match(events[0].content[0].text,/paper_full_text/);
-   const questions=events.filter(e=>e.kind==='message');assert.equal(questions.length,2);
-   for(const q of questions){assert.doesNotMatch(q.content[0].text,/paper_full_text|knownVersion/);assert.match(q.content[0].text,/A selection/);}
+   assert.equal(events.filter(e=>e.kind==='message').length,0);
+   assert.equal(events.filter(e=>e.kind==='context').length,1);
+   assert.match(events[0].content[0].text,/A selection/);
  }finally{clearTimeout(conversation?.timer);globalThis.window=previous;}
 });
 

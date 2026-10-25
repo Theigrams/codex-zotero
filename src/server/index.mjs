@@ -478,7 +478,7 @@ if (argv.includes('--standalone')) {
       uri: URI, mimeType: RESOURCE_MIME_TYPE, text: await readFile(join(here, 'panel.html'), 'utf8'),
       _meta: {
         ui: { prefersBorder: false },
-        'openai/ui': { availableDisplayModes: ['inline', 'fullscreen'], preferredDisplayMode: 'fullscreen' },
+        'openai/ui': { availableDisplayModes: ['inline', 'fullscreen'], preferredDisplayMode: 'inline' },
       },
     }],
   }));

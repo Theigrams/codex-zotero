@@ -28,22 +28,27 @@ try {
   assert.ok(view.docId);
   await frame.evaluate(()=>window.__webTools.reader_select_block.execute({page:1,index:0,attach:true}));
   await page.waitForFunction(()=>window.__modelContexts.at(-1)?.structuredContent.contextBlocks.length===1);
-  await frame.click('#ask');await frame.type('#askInput','解释这个段落');await frame.click('#askDraft');
+  await frame.click('#ask');
+  await page.waitForFunction(()=>window.__displayRequests.length===1);
+  assert.deepEqual(await page.evaluate(()=>window.__displayRequests),['inline']);
+  assert.equal(await page.evaluate(()=>window.__messages.length),0,'handoff must not append to or send the native draft');
+  assert.equal(await frame.evaluate(()=>window.__contexts.items.length),1,'asking about an attached block does not duplicate it');
+  assert.equal(await frame.$('#askInput'),null,'no second composer');
+  await frame.click('#contextAsk');
+  assert.equal(await page.evaluate(()=>window.__displayRequests.length),1,'inline mode does not request a redundant change');
+  // A declined transition keeps all attachments and explains where to write.
+  await page.evaluate(()=>{window.__declineDisplay=true;window.__setHostContext({displayMode:'fullscreen'});});
+  await frame.click('#contextAsk');
+  await page.waitForFunction(()=>window.__displayRequests.length===2);
+  await frame.waitForFunction(()=>document.body.textContent.includes('可通过窗口上的显示控件返回对话'));
+  assert.equal(await frame.evaluate(()=>window.__contexts.items.length),1);
+  assert.equal(await page.evaluate(()=>window.__messages.length),0);
+  await page.evaluate(()=>{window.__declineDisplay=false;});
+  await frame.click('#readerMore');await frame.click('#paperNewDraft');
   await page.waitForFunction(()=>window.__messages.length===1);
-  let message=await page.evaluate(()=>window.__messages.at(-1));
-  assert.deepEqual(message._meta['openai/message'],{target:'active',send:false});
-  assert.ok(message.content[0].text.includes('解释这个段落'));
-  await frame.click('#ask');await frame.type('#askInput','另开讨论');await frame.select('#askTarget','new');await frame.click('#askDraft');
-  await page.waitForFunction(()=>window.__messages.length===2);
-  message=await page.evaluate(()=>window.__messages.at(-1));
+  const message=await page.evaluate(()=>window.__messages.at(-1));
   assert.deepEqual(message._meta['openai/message'],{target:'new',send:false});
   assert.ok(message.content.some(c=>c._meta?.['zotero/blockId']),'new conversation includes pinned blocks');
-  await frame.click('#ask');await frame.type('#askInput','在新对话发送');await frame.select('#askTarget','new');await frame.click('#askSend');
-  await page.waitForFunction(()=>window.__messages.length===3);
-  assert.deepEqual((await page.evaluate(()=>window.__messages.at(-1)))._meta['openai/message'],{target:'new',send:true});
-  await frame.click('#ask');await frame.type('#askInput','当前对话发送');await frame.click('#askSend');
-  await page.waitForFunction(()=>window.__messages.length===4);
-  assert.deepEqual((await page.evaluate(()=>window.__messages.at(-1)))._meta['openai/message'],{target:'active',send:true});
   await frame.click('#readerMore');await frame.click('#openOriginal');
   await page.waitForFunction(()=>window.__openedFiles.length===1);
   assert.equal((await page.evaluate(()=>window.__openedFiles))[0],pdf);
@@ -82,5 +87,5 @@ try {
   const invalid=JSON.parse(await frame.evaluate(()=>window.__webTools.reader_go_to_page.execute({page:999999})));
   assert.ok(invalid.error);
   assert.deepEqual(errors,[]);
-  console.log(JSON.stringify({pass:true,checks:['current draft does not send','new draft carries context','send to new conversation','send to current conversation','open original','deep link activation','host theme and cursor','safe area','narrow viewport','settings does not retire reader','native setting sync','file entrypoint subscribes','file update reloads','live page tools','context removal sync','invalid page rejected']}));
+  console.log(JSON.stringify({pass:true,checks:['handoff preserves native draft','no second composer','idempotent attachments','fullscreen handoff to inline','declined mode preserves context','new draft carries context','open original','deep link activation','host theme and cursor','safe area','narrow viewport','settings does not retire reader','native setting sync','file entrypoint subscribes','file update reloads','live page tools','context removal sync','invalid page rejected']}));
 } finally { await browser?.close();server.kill();await rm(root,{recursive:true,force:true}); }

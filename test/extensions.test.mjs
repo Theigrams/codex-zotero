@@ -51,18 +51,66 @@ test('native paper chooser accepts only a returned candidate and preserves cance
   } finally { await client.close();await server.close();await rm(root,{recursive:true,force:true}); }
 });
 
-test('unsupported drafts never fall back to sending; sending guard resets after errors', async () => {
+function testConversation(overrides = {}) {
   globalThis.window = {};
-  let sends=0;
-  const app={getHostCapabilities:()=>({message:{text:{}}}),sendMessage:async()=>{sends++;return {};},updateModelContext:async()=>({})};
-  const host={app,call:async()=>({})};
-  const reader={doc:{id:'a'.repeat(16),title:'Paper',pageCount:1},currentPage:()=>1,range:()=>[1,1]};
-  const conversation=new Conversation({host,reader,selection:{current:null}});
-  await assert.rejects(()=>conversation.ask('test',{send:false}),/不支持/);
-  assert.equal(sends,0);
-  app.sendMessage=async()=>{throw new Error('transport failed');};
-  await assert.rejects(()=>conversation.ask('test'),/transport failed/);
+  const host = { app: { getHostCapabilities: () => ({ message: { text: {} } }), ...overrides.app }, call: async () => ({}), ...overrides };
+  const reader = { doc: { id:'a'.repeat(16), title:'Paper', pageCount:1 }, currentPage:()=>1, range:()=>[1,1] };
+  const conversation = new Conversation({ host, reader, selection: { current:null } });
+  return { conversation, host };
+}
+
+test('chat handoff flushes context before returning to chat without touching a draft', async () => {
+  const events = [];
+  const { conversation } = testConversation({ app: {
+    getHostCapabilities:()=>({}), getHostContext:()=>({displayMode:'fullscreen',availableDisplayModes:['inline','fullscreen']}),
+    updateModelContext:async()=>{events.push('context');},
+    requestDisplayMode:async({mode})=>{events.push(mode);return {mode};},
+    sendMessage:async()=>assert.fail('must not send or edit a draft'),
+  }});
+  conversation.contextBlocks = { items:[], add:async()=>{events.push('attach');return true;} };
+  assert.equal(await conversation.continueInChat({addSelection:true}),true);
+  assert.deepEqual(events,['attach','context','inline']);
+  assert.equal(conversation.handingOff,false);
+  delete globalThis.window;
+});
+
+test('handoff keeps context on declined display changes, and does not navigate after failed attachments', async () => {
+  let moves=0;
+  const { conversation,host } = testConversation({app:{getHostCapabilities:()=>({}),getHostContext:()=>({displayMode:'fullscreen'}),updateModelContext:async()=>({}),
+    requestDisplayMode:async()=>{moves++;return {mode:'fullscreen'};}}});
+  conversation.contextBlocks={items:[],add:async()=>undefined};
+  assert.equal(await conversation.continueInChat({addSelection:true}),undefined);
+  assert.equal(moves,0);
+  assert.equal(await conversation.continueInChat(),false);
+  host.app.requestDisplayMode=async()=>{throw new Error('unsupported');};
+  assert.equal(await conversation.continueInChat(),false);
+  host.app.getHostContext=()=>({displayMode:'fullscreen',availableDisplayModes:['fullscreen']});
+  host.app.requestDisplayMode=async()=>assert.fail('mode not offered');
+  assert.equal(await conversation.continueInChat(),false);
+  host.app.getHostContext=()=>({displayMode:'inline'});
+  assert.equal(await conversation.continueInChat(),true);
+  delete globalThis.window;
+});
+
+test('failed context sync prevents navigation and handoff can be retried', async () => {
+  const { conversation,host }=testConversation({app:{getHostCapabilities:()=>({}),updateModelContext:async()=>{throw new Error('sync failed');},requestDisplayMode:async()=>assert.fail('context was not published')}});
+  await assert.rejects(()=>conversation.continueInChat(),/sync failed/);
+  assert.equal(conversation.handingOff,false);
+  host.app.updateModelContext=async()=>({});host.app.getHostContext=()=>({displayMode:'inline'});
+  assert.equal(await conversation.continueInChat(),true);
+  delete globalThis.window;
+});
+
+test('unsupported new drafts never fall back to sending; draft guard resets after errors', async () => {
+  const {conversation,host}=testConversation();
+  await assert.rejects(()=>conversation.draftNewConversation(),/不支持/);
+  host.extensions={message:{send:async()=>{throw new Error('transport failed');}}};
+  await assert.rejects(()=>conversation.draftNewConversation(),/transport failed/);
   assert.equal(conversation.sending,false);
+  let message;
+  host.extensions.message.send=async p=>{message=p;return {};};
+  await conversation.draftNewConversation();
+  assert.deepEqual(message._meta['openai/message'],{target:'new',send:false});
   delete globalThis.window;
 });
 

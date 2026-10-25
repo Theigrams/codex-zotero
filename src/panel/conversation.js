@@ -1,6 +1,6 @@
 // What reaches the Codex conversation: the reading context kept up to date in the background
-// (updateModelContext — the host keeps only the latest one, spike S11) and questions sent with the
-// original-image crop (sendMessage). In the browser preflight both are recorded on window.__sent instead.
+// (updateModelContext — the host keeps only the latest one). Questions are written in the native
+// composer; the reader prepares context without changing the current draft.
 
 import { contextContent } from '../shared/context-blocks.mjs';
 import { fullTextDescriptor, fullTextContext } from '../shared/full-text.mjs';
@@ -121,38 +121,41 @@ export class Conversation {
     return this.publish('[Zotero 阅读器] 这个面板已被新打开的阅读器面板取代；以较新的阅读器上下文为准。', { document: null, view: 'retired' }).catch(() => {});
   }
 
-  // Sends the question with the selection's text and an original-image crop (formulas are judged from the image).
-  async ask(question, { target = 'active', send = true, wholePaper = false } = {}) {
-    if (this.sending) throw new Error('正在提交，请稍候。');
-    if ((target !== 'active' || !send) && !this.host.extensions?.message) throw new Error('当前宿主不支持消息草稿，请在对话框中提问。');
-    const sel = wholePaper ? null : this.selection.current;
-    const d = this.reader.doc;
-    if (!d) throw new Error('请先打开论文。');
-    const report = this.report(), source = this.source(), blocks = [...(this.contextBlocks?.items || [])];
-    const canImage = !this.host.app || this.host.app.getHostCapabilities()?.message?.image !== undefined;
-    this.sending = true;
+  // One composer: publish attachments, then let the host show the conversation.
+  // Never append a prompt to (or submit) a draft the user may already be editing.
+  async continueInChat({ addSelection = false } = {}) {
+    if (this.handingOff) return;
+    this.handingOff = true;
     try {
-      const img = sel && canImage && await this.host.call('selection_image', { docId: d.id, page: sel.page, rect: this.selection.bounds() });
-      const quote = !sel ? `> 正在阅读${source}，docId ${d.id}，共 ${d.pageCount} 页。需要原文时按需调用阅读工具。` : sel.kind === 'text'
-        ? `> 选段：${source}第 ${sel.page} 页\n> 「${clip(sel.text)}」${img ? '\n（附原文截图；公式与符号以截图为准）' : ''}`
-        : `> 框选：${source}第 ${sel.page} 页的一块区域${img ? '（见截图）' : ''}${sel.text ? `\n> ${clip(sel.text)}` : ''}`;
-      const text = `${question.trim() || (sel ? '请解释这段内容。' : '请结合已加入的上下文，帮助我阅读这篇论文。')}\n\n${quote}`;
-      // Keep retrieval policy in background context, not in the user's visible question.
+      if (addSelection && !await this.contextBlocks?.add()) return;
       await this.sync();
       await this.publishQueue;
-      // The server keeps this selection, so the answer can be saved on it after the user clicked elsewhere.
-      if (sel && send) this.host.call('panel_report', { view: 'paper', ...report, asked: report.selection }).catch(() => {});
-      const content = [{ type: 'text', text }, ...(canImage && img ? [{ type: 'image', data: img.data, mimeType: 'image/png' }] : [])];
-      // A new conversation cannot see this panel's current model context.
-      if (target === 'new') content.push(...contextContent('', blocks, { extended: true, images: canImage }).slice(1));
-      if (this.host.app) {
-        const r = this.host.extensions?.message
-          ? await this.host.extensions.message.send({ role: 'user', content, _meta: { 'openai/message': { target, send } } })
-          : await this.host.app.sendMessage({ role: 'user', content });
-        if (r?.isError) throw new Error('Codex 没有接收这条消息。');
-      } else {
-        window.__sent.push({ kind: 'message', text, image: canImage && img ? `${img.width}x${img.height}` : null });
-      }
+      const app = this.host.app, context = app?.getHostContext?.();
+      if (context?.displayMode === 'inline') return true;
+      if (!app?.requestDisplayMode || (context?.availableDisplayModes && !context.availableDisplayModes.includes('inline'))) return false;
+      try {
+        const result = await app.requestDisplayMode({ mode: 'inline' }, { timeout: 3000 });
+        return result?.mode === 'inline';
+      } catch { return false; } // Attachments remain usable even if the host declines the mode change.
+    } finally { this.handingOff = false; }
+  }
+
+  // New conversations do not inherit this app's model context. Only this explicit
+  // action creates a draft, carrying the paper identity and the pinned blocks once.
+  async draftNewConversation() {
+    if (this.sending) return;
+    if (!this.host.extensions?.message) throw new Error('当前宿主不支持新对话草稿，请在对话框中提问。');
+    const d = this.reader.doc;
+    if (!d) throw new Error('请先打开论文。');
+    this.sending = true;
+    try {
+      const blocks = [...(this.contextBlocks?.items || [])];
+      const images = this.host.app?.getHostCapabilities()?.message?.image !== undefined;
+      const content = [{ type: 'text', text: `关于${this.source()}（docId ${d.id}，共 ${d.pageCount} 页）：` },
+        ...contextContent('', blocks, { extended: true, images }).slice(1)];
+      const result = await this.host.extensions.message.send({ role: 'user', content,
+        _meta: { 'openai/message': { target: 'new', send: false } } });
+      if (result?.isError) throw new Error('ChatGPT 没有接收新对话草稿。');
     } finally { this.sending = false; }
   }
 }

@@ -8,7 +8,7 @@ import { z } from 'zod';
 console.debug = () => {};
 
 const frame = document.querySelector('iframe');
-let currentHostContext = { displayMode: 'fullscreen', platform: 'desktop', theme: 'light', locale: 'zh-CN' };
+let currentHostContext = { displayMode: 'fullscreen', availableDisplayModes: ['inline', 'fullscreen'], platform: 'desktop', theme: 'light', locale: 'zh-CN' };
 const bridge = new AppBridge(null, { name: 'codex-zotero preflight host', version: '0.1.0' }, {
   serverTools: {}, serverResources: {}, message: { text: {}, image: {} },
   experimental: { 'openai/modelContext': {}, 'openai/message': {}, 'openai/files': {}, 'openai/resource': {} },
@@ -33,6 +33,13 @@ bridge.setRequestHandler(z.object({ method: z.literal('openai/files/open'), para
   window.__openedFiles.push(params.path); return {};
 });
 window.__setHostContext = context => { currentHostContext = { ...currentHostContext, ...context }; bridge.setHostContext(currentHostContext); };
+window.__displayRequests = [];
+window.__declineDisplay = false;
+bridge.onrequestdisplaymode = async ({ mode }) => {
+  window.__displayRequests.push(mode);
+  if (!window.__declineDisplay) window.__setHostContext({ displayMode: mode });
+  return { mode: currentHostContext.displayMode };
+};
 window.__activate = data => bridge.sendToolResult({ content: [], structuredContent: data });
 window.__subscriptions = [];
 for (const method of ['resources/subscribe', 'resources/unsubscribe']) bridge.setRequestHandler(z.object({method:z.literal(method),params:z.object({uri:z.string()})}),async({params})=>{window.__subscriptions.push({method,...params});return {};});

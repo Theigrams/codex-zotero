@@ -61,7 +61,6 @@
   #toolbar button { padding: 3px 9px; border-radius: 4px; }
   #toolbar button:hover { background: var(--hover); }
   #toolbar button.primary { color: var(--accent); font-weight: 600; }
-  #askInput { width: min(320px, 70vw); font: inherit; color: var(--text); background: var(--bg); border: 0; outline: none; padding: 3px 6px; }
   #toolbarNote { color: var(--muted); padding: 0 6px; }
 
   /* Annotation popup: opens on a click on an annotation; edits are saved as they are made. */
@@ -332,13 +331,9 @@
   #readerMenu { position:absolute; z-index:9; right:max(8px, var(--safe-right, 0px)); top:calc(34px + var(--safe-top, 0px)); padding:5px; max-width:calc(100% - 16px); background:var(--bg); border:1px solid var(--line); border-radius:6px; box-shadow:0 4px 16px #0001; }
   #readerMenu button { display:block; width:100%; text-align:left; padding:7px 10px; border-radius:4px; }
   #readerMenu button:hover { background:var(--hover); }
-  #askActions { display:flex; gap:6px; }
-  #askTarget { font:inherit; color:var(--text); background:var(--bg); border:1px solid var(--line); border-radius:4px; }
   #toolbar { flex-wrap:wrap; max-width:calc(100% - 16px); }
   #toolbar button { white-space:nowrap; flex-shrink:0; }
   #toolbarNote:not([hidden]) { flex-basis:100%; font-size:11px; }
-  #toolbar:has(#askInput:not([hidden])) { flex-wrap:wrap; max-width:calc(100% - 16px); }
-  #askInput { min-width:100px; max-width:100%; }
   #contextAsk { white-space:nowrap; color:var(--accent); }
   .settings-only > :not(#settings):not(#message) { display:none !important; }
   .settings-only #settings { inset:0; width:100%; max-width:none; border:none; }
@@ -374,7 +369,7 @@
 <div id="readerMenu" aria-label="论文操作" hidden>
   <button id="copyLocation">复制当前位置链接</button>
   <button id="openOriginal" hidden>打开原 PDF</button>
-  <button id="paperDraft" hidden>添加到当前草稿</button>
+  <button id="paperChat" title="返回 ChatGPT 对话框，不改动草稿">回到对话</button>
   <button id="paperNewDraft" hidden>在新对话中讨论</button>
 </div>
 
@@ -449,14 +444,12 @@
   <p>模型会在需要时读取全文，并复用当前对话中已读的内容。</p>
 
 </section>
-<div id="contextTray" aria-label="已加入的上下文" hidden><span id="contextCount">上下文</span><ul id="contextList"></ul><button id="contextAsk" title="讨论已加入的上下文">提问</button><button id="contextClear">清空</button></div>
+<div id="contextTray" aria-label="已加入的上下文" hidden><span id="contextCount">上下文</span><ul id="contextList"></ul><button id="contextAsk" title="带上已加入的上下文，返回 ChatGPT 对话框">去提问</button><button id="contextClear">清空</button></div>
 <div id="toolbar" hidden>
   <button id="addContext" class="primary" title="把选中的内容加入 ChatGPT 上下文，不发送消息">加入上下文</button>
-  <button id="ask" title="把选段和原图发到对话里提问">提问</button>
+  <button id="ask" title="加入当前选区，并返回 ChatGPT 对话框填写问题">去提问</button>
   <button id="highlight" title="高亮（H；数字键换颜色，加 ⇧ 为下划线）">高亮</button>
   <button id="comment" title="高亮并写评论">评论</button>
-  <input id="askInput" hidden placeholder="针对这段提问，回车发送" aria-label="问题">
-  <span id="askActions" hidden><select id="askTarget" aria-label="目标对话"><option value="active">当前对话</option><option value="new">新对话</option></select><button id="askSend">发送</button><button id="askDraft">草稿</button></span>
   <span id="toolbarNote" hidden></span>
 </div>
 

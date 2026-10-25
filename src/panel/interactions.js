@@ -9,7 +9,7 @@ export class Interactions {
       this.menu.hidden = !this.menu.hidden;
       $('readerMore').setAttribute('aria-expanded', String(!this.menu.hidden));
       $('openOriginal').hidden = !host.extensions?.files;
-      for (const id of ['paperDraft', 'paperNewDraft']) $(id).hidden = !host.extensions?.message;
+      $('paperNewDraft').hidden = !host.extensions?.message;
     };
     document.addEventListener('click', e => { if (!e.target.closest('#readerMenu, #readerMore')) this.close(); });
     document.addEventListener('keydown', e => { if (e.key === 'Escape' && !this.menu.hidden) { this.close(); $('readerMore').focus(); } });
@@ -19,12 +19,16 @@ export class Interactions {
       const { path } = await host.call('document_file', { docId: reader.doc.id });
       await host.extensions.files.open(path);
     });
-    for (const [id, target] of [['paperDraft', 'active'], ['paperNewDraft', 'new']]) $(id).onclick = () => this.run(async () => {
-      await conversation.ask('', { target, send: false, wholePaper: true }); notify('已放入可编辑草稿，尚未发送');
+    $('paperNewDraft').onclick = () => this.run(async () => {
+      await conversation.draftNewConversation(); notify('已打开新对话草稿，请填写问题后发送');
     });
-    $('contextAsk').onclick = () => this.run(async () => {
-      await conversation.ask('', { send: !host.extensions?.message, wholePaper: true });
-      notify(host.extensions?.message ? '已放入可编辑草稿，尚未发送' : '已发送到对话');
+    for (const id of ['ask', 'contextAsk', 'paperChat']) $(id).onclick = () => this.run(async () => {
+      const buttons = ['ask', 'contextAsk', 'paperChat'].map($);
+      buttons.forEach(b => { b.disabled = true; });
+      try {
+        const shown = await conversation.continueInChat({ addSelection: id === 'ask' });
+        if (shown !== undefined) notify(shown ? '请在 ChatGPT 对话框中输入问题' : '上下文已准备好，请使用 ChatGPT 对话框；可通过窗口上的显示控件返回对话');
+      } finally { buttons.forEach(b => { b.disabled = false; }); }
     });
     this.registerTools();
   }
