@@ -13,6 +13,8 @@ Before summarizing a paper, successfully read actual page text or cached full te
 
 A tool name mentioned in background context is not proof that the tool is callable. If neither MCP nor the live reader provides a working read operation, state that the paper cannot be verified in this conversation. Do not fill the gap with a generic overview inferred from the title, and do not claim to have read cached OCR merely because its version is present. This local plugin needs a host that exposes local execution; changing to a new Chat does not itself guarantee access.
 
+The reader is an embedded MCP App, not an ordinary browser tab. Do not connect to a browser, open its source HTML, or invent a tool invocation to reach the named page tools when they are absent from your actual tool surface. `readingAccess.registeredPageTools` reports registration inside the page only; `modelToolExposure: unknown` means the page cannot verify model discovery. Treat missing tools as an access limitation, not an OCR failure; do not re-upload or re-recognize the paper to fix it.
+
 ## Knowing what the user means
 
 - The panel keeps a short reading context in this conversation (paper, page, selection). For "this / here / 这段 / 这个公式", use it; call `reader_state` if it is missing or stale.

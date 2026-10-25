@@ -60,6 +60,23 @@ function testConversation(overrides = {}) {
   return { conversation, host };
 }
 
+test('page registration never claims Chat model access or injects the cached body', () => {
+  const { conversation } = testConversation();
+  try {
+    conversation.setFullTextStatus(conversation.reader.doc.id, { complete:true, version:'v1', characters:29451, body:'PRIVATE FULL BODY' });
+    for (const registered of [[], ['reader_read_full_text','reader_read_pages']]) {
+      conversation.readingTools = registered;
+      const { text, structured } = conversation.context();
+      assert.deepEqual(structured.readingAccess, { registeredPageTools:registered, modelToolExposure:'unknown' });
+      assert.equal(structured.liveReadingTools, undefined);
+      assert.match(text, /工具名出现在上下文中，不代表工具可调用/);
+      assert.match(text, /不要尝试连接浏览器/);
+      assert.doesNotMatch(text, /PRIVATE FULL BODY|可使用这些页面内工具/);
+      assert.doesNotMatch(JSON.stringify(structured), /PRIVATE FULL BODY/);
+    }
+  } finally { clearTimeout(conversation.timer); delete globalThis.window; }
+});
+
 test('preparing a question publishes context without changing fullscreen or the native draft', async () => {
   const events = [];
   const { conversation } = testConversation({ app: {

@@ -31,4 +31,19 @@
 
 测试使用隔离文库和模拟 OCR。真实 Chat 的工具发现仍需在目标宿主验证，不能用“元数据可见”作为验证通过的替代。
 
+## 实际 Chat 复测（2026-10-25）
+
+完成上述可见性和返回正文修正后，用户在新 Chat、阅读器保持展开的情况下复测，仍未获得 `paper_full_text` 或 `reader_read_full_text`。页面注册成功不能据此等同于模型发现成功。
+
+已确认的边界：
+
+- 同一台机器上的本地 MCP 可以返回已缓存的 9 页论文全文（29451 字符），不是 OCR 缓存丢失。
+- 桌面宿主日志记录 Zotero MCP `status=ready`，阅读器持续成功发起页面与批注工具调用。没有证据表明 Zotero MCP 启动失败。
+- Chat 回答仍缺少正文读取工具，并报告浏览器连接上下文不满足要求。嵌入的 MCP App 不是普通浏览器标签；连接浏览器不是可靠的替代入口。
+- 以上支持“当前 Chat 的工具接入链路尚未打通”，不足以断言所有 Chat 或所有桌面版本都不支持本地 MCP，也不足以认定某个具体宿主配置项是根因。
+
+阅读器因此只报告 `readingAccess.registeredPageTools` 和 `modelToolExposure: unknown`，不宣称模型已经能调用。模型应检查本轮真正的工具列表；缺少工具时直接报告读取不可用，不能把重启、重新 OCR、打开源码 HTML 或重复新建 Chat 当作已验证的修复。
+
+本地 MCP/浏览器预检通过不计为 Chat 端到端通过。剩余验收条件是：在目标 Chat 中成功执行一次正文读取，返回实际文字并据此引用原 PDF 页码。若宿主没有将本地工具交给该 Chat，插件代码无法自行增加它的工具权限；可另行评估本地 Work/Codex、可访问的远程 MCP，或用户主动添加全文的备用流程。当前版本未自动切换模式、开启公网服务或注入全文。
+
 参考：[工具可见性与返回格式](https://developers.openai.com/plugins/reference)、[桌面本地插件](https://developers.openai.com/plugins/deploy/desktop-only)、[WebMCP](https://github.com/openai/mcp-extensions/blob/main/docs/spec.md#webmcp)。

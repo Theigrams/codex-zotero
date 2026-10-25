@@ -55,7 +55,8 @@ export class Conversation {
     const fullText = this.fullTexts.get(d.id);
     const retrieval = fullTextContext(d.id, fullText);
     if (retrieval) lines.push(retrieval);
-    if(this.readingTools?.includes('reader_read_full_text')) lines.push('[正文读取入口] 当前阅读器已注册 reader_read_full_text（缓存全文）、reader_read_pages（本机页文字）、reader_read_annotations（高亮与评论）。若未获得服务端同名阅读工具，可使用这些页面内工具。读取本机论文不是联网搜索。只有标题或全文可用状态时，不能据此声称已经读过或总结了论文。');
+    lines.push('[读取能力边界] 阅读器提供的文档信息和缓存状态不代表当前对话已获得读取工具。仅使用本轮实际暴露的工具读取正文；工具名出现在上下文中，不代表工具可调用。若没有读取工具，明确说明本轮无法读取。阅读器面板不是普通浏览器标签，不要尝试连接浏览器来寻找这些工具，也不要根据标题推测全文。');
+    if(this.readingTools?.includes('reader_read_full_text')) lines.push('[页面注册状态] 页面内已注册 reader_read_full_text（缓存全文）、reader_read_pages（本机页文字）、reader_read_annotations（高亮与评论）；是否向本轮模型暴露由宿主决定，当前页面无法确认。只有它们确实出现在可调用工具列表中时才使用。读取本机论文不是联网搜索。');
     const annotationState = this.annotationStates.get(d.id);
     if (annotationState) lines.push(`[用户批注] ${annotationState.count} 条批注，${annotationState.comments} 条评论；版本 ${annotationState.version || '未同步'}。用户问及标注或自己的想法时，使用 ${d.itemKey ? 'research_annotations(itemKey)' : 'list_annotations(docId)'} 读取原文与评论。${annotationState.error ? '当前为缓存，Zotero 暂不可用。' : ''}`);
     if (sel?.kind === 'text') lines.push(`用户选中了第 ${sel.page} 页的这段文字：「${clip(sel.text)}」`);
@@ -64,7 +65,7 @@ export class Conversation {
       text: lines.join('\n'),
       structured: {
         document: { id: d.id, title: d.title, itemKey: d.itemKey, attachmentKey: d.attachmentKey, pageCount: d.pageCount },
-        page, visible: [a, b], liveReadingTools: this.readingTools || [], ...(fullText ? { fullText } : {}), ...(annotationState ? { annotations: annotationState } : {}),
+        page, visible: [a, b], readingAccess: { registeredPageTools: this.readingTools || [], modelToolExposure: 'unknown' }, ...(fullText ? { fullText } : {}), ...(annotationState ? { annotations: annotationState } : {}),
         selection: sel ? (sel.kind === 'text' ? { kind: 'text', page: sel.page, text: clip(sel.text) } : { kind: 'region', page: sel.page, rect: sel.rect }) : null,
       },
     };
