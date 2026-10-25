@@ -8,7 +8,7 @@ import { z } from 'zod';
 import { createServer } from 'node:http';
 import { readFile } from 'node:fs/promises';
 import { homedir } from 'node:os';
-import { dirname, join } from 'node:path';
+import { dirname, join, isAbsolute } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { RENDER_MODES } from '../shared/layout.mjs';
 import { DocumentAnalysis } from './analysis.mjs';
@@ -28,11 +28,14 @@ import { State } from './state.mjs';
 import { TextService } from './text.mjs';
 import { modelTools } from './tools.mjs';
 import { resolvePdf, searchAnnotations, searchLibrary } from './zotero.mjs';
+import { registerExtensions } from './extensions.mjs';
 
 const here = dirname(fileURLToPath(import.meta.url));
 const argv = process.argv.slice(2);
 const option = name => (argv.includes(name) ? argv[argv.indexOf(name) + 1] : undefined);
-const URI = 'ui://codex-zotero/reader-v1.html';
+const URI = 'ui://codex-zotero/reader-v2.html';
+const SETTINGS_URI = 'ui://codex-zotero/settings-v1.html';
+let prefsRevision = 0;
 
 const pool = new HelperPool(join(here, 'pdfkit-helper'), Number(process.env.CODEX_ZOTERO_HELPERS) || 4); // 4: zoom gets sharp in ~150ms instead of ~210ms (preflight)
 const documents = new Documents({
@@ -178,7 +181,14 @@ const appTools = {
   async ocr_job_status({ docId }) { return analysis.status(documents.get(docId)); },
   async ocr_job_start({ docId, force }) { return analysis.start(documents.get(docId), { force }); },
   async ocr_job_cancel({ docId }) { return analysis.cancel(documents.get(docId)); },
-  async mineru_configure({ apiKey }) { await analysis.mineru.configure(apiKey); return { prefs: await readerPrefs() }; },
+  async mineru_configure({ apiKey }) { await analysis.mineru.configure(apiKey); prefsRevision++; return { prefs: await readerPrefs() }; },
+  async document_file({ docId }) { return { path: (await docById(docId)).path }; },
+  async file_open(_args, extra) {
+    const path = extra?._meta?.['openai/resource']?.path;
+    if (typeof path !== 'string' || !isAbsolute(path)) throw new Error('宿主未提供已授权的 PDF 文件，请从 Zotero 打开。');
+    const doc = await openSource({ path });
+    return { ...(await tabsView()), active: await opened(doc) };
+  },
   async prefs_get() { return { prefs: await readerPrefs() }; },
   async panel_hello({ instance }) {
     activeInstance = instance;
@@ -198,7 +208,7 @@ const appTools = {
   async panel_poll({ instance, seen = 0 }) {
     const superseded = activeInstance !== null && instance !== activeInstance;
     if (!superseded) lastPoll = Date.now();
-    return { superseded, nav: !superseded && nav.seq > seen ? nav : null };
+    return { superseded, prefsRevision, nav: !superseded && nav.seq > seen ? nav : null };
   },
   async tab_open({ docId, itemKey }) {
     if (docId?.startsWith('note:')) {
@@ -276,6 +286,7 @@ const appTools = {
   },
   async prefs_set(patch) {
     await state.setPrefs(patch);
+    prefsRevision++;
     return { prefs: await readerPrefs() };
   },
   async page_text({ docId, page }) {
@@ -331,6 +342,8 @@ const selectionSchema = z.object({
   rects: z.array(rect).max(200).optional(), rect: rect.optional(), a: z.number().int().optional(),
 });
 const appSchemas = {
+  document_file: { docId: z.string() },
+  file_open: {},
   layout_page: { docId: z.string(), page: z.number().int().min(1) },
   ocr_job_status: { docId: z.string() },
   ocr_job_start: { docId: z.string(), force: z.boolean().optional() },
@@ -415,6 +428,10 @@ if (argv.includes('--standalone')) {
           "default-src 'none'; script-src 'unsafe-inline'; style-src 'unsafe-inline'; img-src data:; connect-src 'self'");
         return res.end(await readFile(join(here, 'panel.html')));
       }
+      if (req.url === '/settings') {
+        res.setHeader('Content-Type', 'text/html; charset=utf-8');
+        return res.end(await readFile(join(here, 'settings.html')));
+      }
       if (req.url === '/host') {
         res.setHeader('Content-Type', 'text/html; charset=utf-8');
         return res.end(await readFile(join(here, 'host.html')));
@@ -454,6 +471,7 @@ if (argv.includes('--standalone')) {
   const server = new McpServer({ name: 'codex-zotero', version: '0.1.0' });
   const ok = (data, text = 'ok') => ({ content: [{ type: 'text', text }], structuredContent: data });
   const fail = e => ({ isError: true, content: [{ type: 'text', text: e.message }] });
+  registerExtensions(server, { state, searchLibrary, prefsChanged: () => { prefsRevision++; } });
 
   registerAppResource(server, 'reader', URI, { mimeType: RESOURCE_MIME_TYPE }, async () => ({
     contents: [{
@@ -465,6 +483,25 @@ if (argv.includes('--standalone')) {
     }],
   }));
 
+  registerAppResource(server, 'settings', SETTINGS_URI, { mimeType: RESOURCE_MIME_TYPE }, async () => ({ contents: [{
+    uri: SETTINGS_URI, mimeType: RESOURCE_MIME_TYPE, text: await readFile(join(here, 'settings.html'), 'utf8'),
+    _meta: { ui: { prefersBorder: false }, 'openai/ui': { availableDisplayModes: ['inline', 'fullscreen'], preferredDisplayMode: 'inline' } },
+  }] }));
+  registerAppTool(server, 'reader_settings', {
+    title: '设置与 MinerU 密钥', description: 'Open private reader settings. Credentials are entered only in the app.', inputSchema: {},
+    annotations: { readOnlyHint: true }, _meta: { ui: { resourceUri: SETTINGS_URI, visibility: ['app'] } },
+  }, async () => ok({ view: 'settings' }));
+  registerAppTool(server, 'reader_library', {
+    title: 'Zotero 文库', description: 'Browse the Zotero library.', inputSchema: {}, annotations: { readOnlyHint: true },
+    _meta: { ui: { resourceUri: URI, visibility: ['app'] }, 'openai/ui': { entrypoints: [{ type: 'global' }] } },
+  }, async () => ok({ view: 'library' }));
+  registerAppTool(server, 'reader_file', {
+    title: '用 Zotero 阅读器打开 PDF', description: 'Read a PDF authorized by the host file viewer.',
+    inputSchema: { file: z.object({ name: z.string().min(1), resourceUri: z.string().min(1) }) },
+    annotations: { readOnlyHint: true },
+    _meta: { ui: { resourceUri: URI, visibility: ['app'] }, 'openai/ui': { entrypoints: [{ type: 'file', extensions: ['.pdf'] }] } },
+  }, async ({ file }) => ok({ view: 'file', file }));
+
   registerAppTool(server, 'reader_open', {
     title: 'Zotero 阅读器',
     description: 'Open the Zotero paper reader panel in Codex. Pass itemKey (the 8-character Zotero key of a paper or of its PDF attachment, e.g. from search_library) to open that paper in a tab; omit it to show the reader as the user left it. Each call opens a new panel, so to move within a paper already open use show_location instead.',
@@ -472,7 +509,7 @@ if (argv.includes('--standalone')) {
     annotations: { readOnlyHint: true, destructiveHint: false, openWorldHint: false },
     _meta: {
       ui: { resourceUri: URI, visibility: ['app', 'model'] },
-      'openai/ui': { entrypoints: [{ type: 'thread' }], preferredModelDisplayMode: 'fullscreen' },
+      'openai/ui': { entrypoints: [{ type: 'thread' }] },
     },
   }, async args => {
     try {
@@ -487,9 +524,9 @@ if (argv.includes('--standalone')) {
     registerAppTool(server, name, {
       description: `Reader panel internal: ${name}`, inputSchema: appSchemas[name],
       _meta: { ui: { resourceUri: URI, visibility: ['app'] } },
-    }, async args => {
+    }, async (args, extra) => {
       try {
-        return ok(await run(args));
+        return ok(await run(args, extra));
       } catch (e) {
         return fail(e);
       }

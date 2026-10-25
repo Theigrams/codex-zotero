@@ -49,6 +49,10 @@ export async function buildPlugin({ python = process.env.CODEX_ZOTERO_PYTHON || 
   let html = await readFile('src/panel/index.html', 'utf8');
   const katex = await katexCSS();
   html = html.replace('/* BUNDLED_KATEX */', () => katex);
+  const extensionStyles = await readFile('node_modules/@openai/mcp-extensions/styles.css', 'utf8');
+  html = html.replace('/* BUNDLED_EXTENSIONS */', () => extensionStyles);
+  const settingsUI = await build({ entryPoints: ['src/panel/settings-entry.js'], bundle: true, write: false, platform: 'browser', format: 'iife', target: 'chrome120', minify: true });
+  await writeFile(`${root}/dist/settings.html`, html.replace('/* BUNDLED_APP */', () => settingsUI.outputFiles[0].text.replace(/<\/script/gi, '<\\/script')));
   html = html.replace('/* BUNDLED_APP */', () => ui.outputFiles[0].text.replace(/<\/script/gi, '<\\/script'));
   new Script(html.match(/<script>([\s\S]*)<\/script>/)[1]); // syntax check of the inlined bundle
   await writeFile(`${root}/dist/panel.html`, html);
@@ -71,6 +75,7 @@ export async function buildPlugin({ python = process.env.CODEX_ZOTERO_PYTHON || 
   await writeFile(`${root}/.codex-plugin/plugin.json`, JSON.stringify({
     name: PLUGIN, version: VERSION, description: ui_.longDescription, author: { name: 'Local' }, license: 'MIT',
     requires_local_executor: true, interface: ui_, skills: './skills/', mcpServers: './.mcp.json',
+    extensions: { 'com.openai': { onboardingSkill: './skills/setup/SKILL.md' } },
   }, null, 2));
   // Codex starts the server without this shell's environment: CODEX_ZOTERO_* settings in effect now (docs/CONFIG.md)
   // go into the launch config, with the Python that was found.

@@ -40,13 +40,25 @@ export class ContextBlocks {
     host.app?.addEventListener('hostcontextchanged', context => {
       if (!Object.hasOwn(context, 'openai/modelContext')) return;
       const state = context['openai/modelContext'];
-      if (state == null) { if (this.items.length) { this.generation++; this.items = []; this.changed(); } return; }
-      const ids = new Set((state.content || []).filter(b => b.type === 'text').map(b => b._meta?.['zotero/blockId']).filter(Boolean));
-      // Host notifications acknowledging our own update don't need to publish again.
-      const kept = this.items.filter(b => ids.has(b.id));
-      if (kept.length !== this.items.length) { this.items = kept; this.changed(); }
+      // An acknowledgement can arrive before update() returns its id. Defer it so
+      // an older snapshot cannot delete a block the user has just added locally.
+      if (this.publishing) (this.pendingHostStates ||= []).push(state);
+      else this.applyHostState(state);
     });
     this.render();
+  }
+  applyHostState(state) {
+    if (state?.updateId && this.acknowledged?.includes(state.updateId)) return;
+    if (state == null) { if (this.items.length) { this.generation++; this.items = []; this.changed(); } return; }
+    const ids = new Set((state.content || []).filter(b => b.type === 'text').map(b => b._meta?.['zotero/blockId']).filter(Boolean));
+    const kept = this.items.filter(b => ids.has(b.id));
+    if (kept.length !== this.items.length) { this.items = kept; this.changed(); }
+  }
+  endPublish(updateId) {
+    if (updateId) this.acknowledged = [...(this.acknowledged || []), updateId].slice(-16);
+    this.publishing = false;
+    const pending = this.pendingHostStates || []; this.pendingHostStates = [];
+    for (const state of pending) this.applyHostState(state);
   }
   pickColor() {
     const unused = CONTEXT_COLORS.filter(color => !this.items.some(b => b.contextColor === color));

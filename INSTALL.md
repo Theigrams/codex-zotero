@@ -7,7 +7,7 @@
 ```bash
 sw_vers -productVersion                 # macOS
 xcrun swiftc --version                  # Xcode 命令行工具；没有就运行 xcode-select --install
-node --version                          # 需要 v20 或更高
+node --version                          # 需要 v22 或更高
 ls /Applications/ChatGPT.app/Contents/Resources/cua_node/bin/node   # Codex 自带的 Node，插件运行时用它
 curl -s http://127.0.0.1:23119/connector/ping                        # Zotero 本地服务
 ```

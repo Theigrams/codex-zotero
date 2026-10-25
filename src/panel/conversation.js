@@ -86,11 +86,11 @@ export class Conversation {
     const { text, structured } = this.context();
     const signature = text + JSON.stringify((this.contextBlocks?.items || []).map(b => b.id));
     if (signature === this.lastContext) return;
-    this.lastContext = signature;
     const report = this.reader.doc && !this.elsewhere ? { view: 'paper', ...this.report() }
       : { view: this.note ? 'note' : 'home', note: this.note, docId: null };
     this.host.call('panel_report', report).catch(() => {});
     await this.publish(text, structured);
+    this.lastContext = signature;
   }
 
   async publish(text, structured) {
@@ -101,7 +101,12 @@ export class Conversation {
     });
     const params = { content, structuredContent: { ...structured, contextBlocks: blocks.map(({ image, ...b }) => b) } };
     this.publishQueue = (this.publishQueue || Promise.resolve()).catch(() => {}).then(async () => {
-      if (this.host.extensions?.modelContext) await this.host.extensions.modelContext.update(params);
+      if (this.host.extensions?.modelContext) {
+        if (this.contextBlocks) this.contextBlocks.publishing = true;
+        let result;
+        try { result = await this.host.extensions.modelContext.update(params); }
+        finally { this.contextBlocks?.endPublish(result?.updateId); }
+      }
       else if (this.host.app) await this.host.app.updateModelContext(params);
       else window.__sent.push({ kind: 'context', text, content, structured: params.structuredContent });
     });
@@ -117,29 +122,37 @@ export class Conversation {
   }
 
   // Sends the question with the selection's text and an original-image crop (formulas are judged from the image).
-  async ask(question) {
-    const sel = this.selection.current;
-    if (!sel) throw new Error('没有选区。');
+  async ask(question, { target = 'active', send = true, wholePaper = false } = {}) {
+    if (this.sending) throw new Error('正在提交，请稍候。');
+    if ((target !== 'active' || !send) && !this.host.extensions?.message) throw new Error('当前宿主不支持消息草稿，请在对话框中提问。');
+    const sel = wholePaper ? null : this.selection.current;
     const d = this.reader.doc;
-    const img = await this.host.call('selection_image', { docId: d.id, page: sel.page, rect: this.selection.bounds() });
-    const quote = sel.kind === 'text'
-      ? `> 选段：${this.source()}第 ${sel.page} 页\n> 「${clip(sel.text)}」\n（附原文截图；公式与符号以截图为准）`
-      : `> 框选：${this.source()}第 ${sel.page} 页的一块区域（见截图）${sel.text ? `\n> ${clip(sel.text)}` : ''}`;
-    const text = `${question.trim() || '请解释这段内容。'}\n\n${quote}`;
-    // Keep retrieval policy in background context, not in the user's visible question.
-    await this.sync();
-    await this.publishQueue;
-    // The server keeps this selection, so the answer can be saved on it after the user clicked elsewhere.
-    this.host.call('panel_report', { view: 'paper', ...this.report(), asked: this.report().selection }).catch(() => {});
+    if (!d) throw new Error('请先打开论文。');
+    const report = this.report(), source = this.source(), blocks = [...(this.contextBlocks?.items || [])];
     const canImage = !this.host.app || this.host.app.getHostCapabilities()?.message?.image !== undefined;
-    const content = [{ type: 'text', text }, ...(canImage ? [{ type: 'image', data: img.data, mimeType: 'image/png' }] : [])];
-    if (this.host.app) {
-      const r = this.host.extensions?.message
-        ? await this.host.extensions.message.send({ role: 'user', content })
-        : await this.host.app.sendMessage({ role: 'user', content });
-      if (r?.isError) throw new Error('Codex 没有接收这条消息。');
-    } else {
-      window.__sent.push({ kind: 'message', text, image: canImage ? `${img.width}x${img.height}` : null });
-    }
+    this.sending = true;
+    try {
+      const img = sel && canImage && await this.host.call('selection_image', { docId: d.id, page: sel.page, rect: this.selection.bounds() });
+      const quote = !sel ? `> 正在阅读${source}，docId ${d.id}，共 ${d.pageCount} 页。需要原文时按需调用阅读工具。` : sel.kind === 'text'
+        ? `> 选段：${source}第 ${sel.page} 页\n> 「${clip(sel.text)}」${img ? '\n（附原文截图；公式与符号以截图为准）' : ''}`
+        : `> 框选：${source}第 ${sel.page} 页的一块区域${img ? '（见截图）' : ''}${sel.text ? `\n> ${clip(sel.text)}` : ''}`;
+      const text = `${question.trim() || (sel ? '请解释这段内容。' : '请结合已加入的上下文，帮助我阅读这篇论文。')}\n\n${quote}`;
+      // Keep retrieval policy in background context, not in the user's visible question.
+      await this.sync();
+      await this.publishQueue;
+      // The server keeps this selection, so the answer can be saved on it after the user clicked elsewhere.
+      if (sel && send) this.host.call('panel_report', { view: 'paper', ...report, asked: report.selection }).catch(() => {});
+      const content = [{ type: 'text', text }, ...(canImage && img ? [{ type: 'image', data: img.data, mimeType: 'image/png' }] : [])];
+      // A new conversation cannot see this panel's current model context.
+      if (target === 'new') content.push(...contextContent('', blocks, { extended: true, images: canImage }).slice(1));
+      if (this.host.app) {
+        const r = this.host.extensions?.message
+          ? await this.host.extensions.message.send({ role: 'user', content, _meta: { 'openai/message': { target, send } } })
+          : await this.host.app.sendMessage({ role: 'user', content });
+        if (r?.isError) throw new Error('Codex 没有接收这条消息。');
+      } else {
+        window.__sent.push({ kind: 'message', text, image: canImage && img ? `${img.width}x${img.height}` : null });
+      }
+    } finally { this.sending = false; }
   }
 }

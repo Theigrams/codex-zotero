@@ -25,6 +25,11 @@
 - 顶栏「OCR」识别整篇，完整结果自动用于文字和版面块。全文由模型根据当前问题按需读取；连续对话复用相同版本，不随每次翻页附带全文。
 - 首次运行 `npm run setup-analysis` 安装本地模型，在阅读器「设置 → MinerU 识别」填写 API key。见 [版面与 OCR 说明](docs/LAYOUT_OCR.md)。
 
+**宿主集成**
+- 从侧栏打开文库、在对话中 @ 搜索论文，或选择本阅读器查看 PDF 文件。
+- 提问可选择当前/新对话，以及直接发送/保留草稿；论文菜单可复制定位链接、打开原 PDF。
+- 原生插件设置与阅读器设置保持同步，主题和光标跟随宿主；支持文件变更通知及模型直接操作当前页面。见 [Extensions 适配说明](docs/EXTENSIONS.md)。
+
 **选择与提问**
 - 双击选词、三击选整句（可跨行、跨栏），⌥ + 拖动框选公式或图。
 - 选中后点"提问"，问题连同选段和原图一起发到对话里；公式以原图为准。
@@ -50,7 +55,7 @@
 | Codex 桌面版 | 装在 `/Applications/ChatGPT.app`（位置不同可用环境变量指定） |
 | Zotero | 测试于 Zotero 10.0.6；需要开启本地 API（设置 → 高级 → "允许此计算机上的其他应用程序与 Zotero 通信"） |
 | Xcode 命令行工具 | 编译 PDFKit 辅助程序（`swiftc`）：`xcode-select --install` |
-| Node.js 20+ 与 npm | 只在构建、安装时使用；插件运行用 Codex 自带的 Node |
+| Node.js 22+ 与 npm | 只在构建、安装时使用；插件运行用 Codex 自带的 Node |
 | Python 3 + PyMuPDF | 可选，用于修复 PDF 文字中的连字和符号：`python3 -m pip install pymupdf fonttools`。没有它也能用 |
 
 ## 安装

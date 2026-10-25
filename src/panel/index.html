@@ -5,9 +5,10 @@
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>Zotero 阅读器</title>
 <style>
+  /* BUNDLED_EXTENSIONS */
   /* BUNDLED_KATEX */
   :root {
-    --bg: #ffffff; --text: #1f1f1d; --muted: #6e6e68; --line: #e2e1dc; --gap: #d9d8d2; --hover: #f2f1ee; --accent: #2f5bd3;
+    --bg: var(--color-background-primary, #ffffff); --text: var(--color-text-primary, #1f1f1d); --muted: var(--color-text-secondary, #6e6e68); --line: var(--color-border-primary, #e2e1dc); --gap: #d9d8d2; --hover: var(--color-background-secondary, #f2f1ee); --accent: var(--color-text-info, #2f5bd3);
     --bar-h: 28px; color-scheme: light dark;
   }
   @media (prefers-color-scheme: dark) {
@@ -15,13 +16,15 @@
       --bg: #1e1e1d; --text: #e8e8e3; --muted: #9d9d96; --line: #383836; --gap: #2c2c2a; --hover: #2a2a28; --accent: #8aa6ff;
     }
   }
+  :root[data-theme="dark"] { --bg:var(--color-background-primary, #1e1e1d); --text:var(--color-text-primary, #e8e8e3); --muted:var(--color-text-secondary, #9d9d96); --line:var(--color-border-primary, #383836); --gap:#2c2c2a; --hover:var(--color-background-secondary, #2a2a28); --accent:var(--color-text-info, #8aa6ff); color-scheme:dark; }
+  :root[data-theme="light"] { color-scheme:light; }
   * { box-sizing: border-box; }
   /* Codex injects -webkit-font-smoothing: antialiased on html and body, which thins every glyph; text renders
      as in a browser again (higher specificity than Codex's rule). */
   html:root, html body { -webkit-font-smoothing: auto; }
   html, body { margin: 0; height: 100%; overflow: hidden; background: var(--bg); color: var(--text);
     font: 13px/1.45 -apple-system, BlinkMacSystemFont, "PingFang SC", sans-serif; }
-  button { font: inherit; color: inherit; background: none; border: 0; padding: 0; cursor: pointer; }
+  button { font: inherit; color: inherit; background: none; border: 0; padding: 0; cursor: var(--cursor-interaction, pointer); }
   [hidden] { display: none !important; }
 
   /* Reading surface: the whole panel; pages run edge to edge, one hairline between pages. */
@@ -321,6 +324,25 @@
   #ocrClose { min-width:24px; min-height:24px; }
   button:focus-visible, select:focus-visible { outline:2px solid var(--accent); outline-offset:2px; }
   @media (max-width:540px) { #contextCount { display:none; } #bar #layoutButton, #bar #ocrButton { padding:2px 4px; font-size:12px; } }
+  #bar { top:var(--safe-top, 0px); padding-left:var(--safe-left, 0px); padding-right:var(--safe-right, 0px); }
+  #scroller { top:var(--safe-top, 0px); bottom:calc(var(--context-h, 0px) + var(--safe-bottom, 0px)); }
+  #contextTray { bottom:var(--safe-bottom, 0px); padding-left:max(10px, var(--safe-left, 0px)); padding-right:max(10px, var(--safe-right, 0px)); }
+  .drawer { top:calc(28px + var(--safe-top, 0px)); bottom:var(--safe-bottom, 0px); }
+  #readerMore { font-size:18px; min-width:24px; }
+  #readerMenu { position:absolute; z-index:9; right:max(8px, var(--safe-right, 0px)); top:calc(34px + var(--safe-top, 0px)); padding:5px; max-width:calc(100% - 16px); background:var(--bg); border:1px solid var(--line); border-radius:6px; box-shadow:0 4px 16px #0001; }
+  #readerMenu button { display:block; width:100%; text-align:left; padding:7px 10px; border-radius:4px; }
+  #readerMenu button:hover { background:var(--hover); }
+  #askActions { display:flex; gap:6px; }
+  #askTarget { font:inherit; color:var(--text); background:var(--bg); border:1px solid var(--line); border-radius:4px; }
+  #toolbar { flex-wrap:wrap; max-width:calc(100% - 16px); }
+  #toolbar button { white-space:nowrap; flex-shrink:0; }
+  #toolbarNote:not([hidden]) { flex-basis:100%; font-size:11px; }
+  #toolbar:has(#askInput:not([hidden])) { flex-wrap:wrap; max-width:calc(100% - 16px); }
+  #askInput { min-width:100px; max-width:100%; }
+  #contextAsk { white-space:nowrap; color:var(--accent); }
+  .settings-only > :not(#settings):not(#message) { display:none !important; }
+  .settings-only #settings { inset:0; width:100%; max-width:none; border:none; }
+  button, .context-pin-actions button { cursor:var(--cursor-interaction, pointer); }
 
 </style>
 </head>
@@ -341,11 +363,19 @@
   </button>
   <button id="layoutButton" title="点击整块选择；按住 ⇧ 点击直接加入上下文" aria-pressed="true">版面</button>
   <button id="ocrButton" title="整篇识别与全文上下文" aria-expanded="false" aria-controls="ocrPanel"><span id="ocrBadge">OCR…</span></button>
+  <button id="readerMore" title="论文操作" aria-label="论文操作" aria-expanded="false" aria-controls="readerMenu">⋯</button>
   <button id="settingsButton" class="icon" title="设置（⌘,）" aria-label="设置">
     <svg width="14" height="14" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.4" aria-hidden="true">
       <path d="M2 4h12M2 12h12"/><circle cx="6" cy="4" r="1.6" fill="var(--bg)"/><circle cx="10.5" cy="12" r="1.6" fill="var(--bg)"/>
     </svg>
   </button>
+</div>
+
+<div id="readerMenu" aria-label="论文操作" hidden>
+  <button id="copyLocation">复制当前位置链接</button>
+  <button id="openOriginal" hidden>打开原 PDF</button>
+  <button id="paperDraft" hidden>添加到当前草稿</button>
+  <button id="paperNewDraft" hidden>在新对话中讨论</button>
 </div>
 
 <aside id="annDrawer" class="drawer" hidden aria-label="批注">
@@ -419,13 +449,14 @@
   <p>模型会在需要时读取全文，并复用当前对话中已读的内容。</p>
 
 </section>
-<div id="contextTray" aria-label="已加入的上下文" hidden><span id="contextCount">上下文</span><ul id="contextList"></ul><button id="contextClear">清空</button></div>
+<div id="contextTray" aria-label="已加入的上下文" hidden><span id="contextCount">上下文</span><ul id="contextList"></ul><button id="contextAsk" title="讨论已加入的上下文">提问</button><button id="contextClear">清空</button></div>
 <div id="toolbar" hidden>
   <button id="addContext" class="primary" title="把选中的内容加入 ChatGPT 上下文，不发送消息">加入上下文</button>
   <button id="ask" title="把选段和原图发到对话里提问">提问</button>
   <button id="highlight" title="高亮（H；数字键换颜色，加 ⇧ 为下划线）">高亮</button>
   <button id="comment" title="高亮并写评论">评论</button>
   <input id="askInput" hidden placeholder="针对这段提问，回车发送" aria-label="问题">
+  <span id="askActions" hidden><select id="askTarget" aria-label="目标对话"><option value="active">当前对话</option><option value="new">新对话</option></select><button id="askSend">发送</button><button id="askDraft">草稿</button></span>
   <span id="toolbarNote" hidden></span>
 </div>
 

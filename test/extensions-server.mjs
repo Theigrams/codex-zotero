@@ -1,0 +1,36 @@
+import assert from 'node:assert/strict';
+import { mkdtemp, rm } from 'node:fs/promises';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
+import { Client } from '@modelcontextprotocol/sdk/client/index.js';
+import { StdioClientTransport } from '@modelcontextprotocol/sdk/client/stdio.js';
+import { fakeZotero } from './fake-zotero.mjs';
+const pdf=process.argv[process.argv.indexOf('--pdf')+1];
+if(!process.argv.includes('--pdf'))throw new Error('Pass --pdf FILE');
+const root=await mkdtemp(join(tmpdir(),'zotero-server-ext-'));
+const zotero=await fakeZotero({pdf});
+const transport=new StdioClientTransport({command:process.execPath,args:['out/plugin/dist/server.mjs'],env:{...process.env,CODEX_ZOTERO_STATE:join(root,'state'),CODEX_ZOTERO_CACHE:join(root,'cache'),CODEX_ZOTERO_API:zotero.url,MINERU_API_KEY:''},stderr:'pipe'});
+const client=new Client({name:'extension-test',version:'1'});
+try{
+ await client.connect(transport);
+ const {tools}=await client.listTools();
+ for(const [name,type]of[['reader_library','global'],['reader_open','thread'],['reader_file','file']]) assert.equal(tools.find(t=>t.name===name)._meta['openai/ui'].entrypoints[0].type,type);
+ assert.deepEqual(tools.find(t=>t.name==='reader_file')._meta['openai/ui'].entrypoints[0].extensions,['.pdf']);
+ const settingsUri=tools.find(t=>t.name==='reader_settings')._meta.ui.resourceUri;
+ assert.ok((await client.readResource({uri:settingsUri})).contents[0].text.includes('settings-only'));
+ const denied=await client.callTool({name:'file_open',arguments:{}});assert.equal(denied.isError,true);
+ const opened=await client.callTool({name:'file_open',arguments:{},_meta:{'openai/resource':{path:pdf}}});
+ assert.ok(!opened.isError,JSON.stringify(opened));
+ const doc=opened.structuredContent.active.document;
+ assert.ok(doc.id);assert.equal(doc.itemKey,null);
+ const file=await client.callTool({name:'document_file',arguments:{docId:doc.id}});assert.equal(file.structuredContent.path,pdf);
+ await client.callTool({name:'panel_hello',arguments:{instance:'test-main'}});
+ await client.callTool({name:'reader_settings',arguments:{}});
+ const poll=await client.callTool({name:'panel_poll',arguments:{instance:'test-main'}});assert.equal(poll.structuredContent.superseded,false);
+ const mentions=await client.callTool({name:'search_mentions',arguments:{query:'Test'}});assert.equal(mentions.structuredContent.items[0].uri,'zotero://paper/PAPER001');
+ assert.ok((await client.readResource({uri:'zotero://paper/PAPER001'})).contents[0].text.includes('Test Paper'));
+ await client.callTool({name:'reader_open',arguments:{itemKey:'PAPER001'}});
+ const reopened=await client.callTool({name:'file_open',arguments:{},_meta:{'openai/resource':{path:pdf}}});
+ assert.equal(reopened.structuredContent.active.document.itemKey,'PAPER001','file viewer preserves known Zotero identity');
+ console.log(JSON.stringify({pass:true,checks:['global/thread/PDF entrypoints','settings resource','file access requires host metadata','authorized PDF open','original file path','settings preserves reader','mentions','paper resource','file viewer preserves Zotero identity']}));
+}finally{await client.close();await transport.close();await zotero.close();await rm(root,{recursive:true,force:true});}

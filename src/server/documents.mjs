@@ -21,7 +21,13 @@ export class Documents {
     const fingerprint = createHash('sha256').update(bytes).digest('hex');
     const id = fingerprint.slice(0, 16);
     const cached = this.byId.get(id);
-    if (cached) return Object.assign(cached, sourceFields(source));
+    if (cached) {
+      // Opening the same PDF through the host file viewer must not unlink its
+      // already-known Zotero identity or discard its bibliographic title.
+      if (source.itemKey) Object.assign(cached, sourceFields(source));
+      else if (source.title && !cached.itemKey) cached.title = source.title;
+      return cached;
+    }
 
     const cacheDir = join(this.cacheRoot, id);
     const info = await this.pool.open(source.path);

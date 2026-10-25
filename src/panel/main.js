@@ -20,6 +20,7 @@ import { Reader } from './reader.js';
 import { Selection } from './selection.js';
 import { Settings } from './settings.js';
 import { timing } from './timing.js';
+import { Interactions } from './interactions.js';
 
 const $ = id => document.getElementById(id);
 const BAR = 28;
@@ -45,6 +46,8 @@ let noteReturn = null; // { id, title } of the note a link led here from (↩ go
 let noteTab = null; // the Zotero note shown in the active tab, when it is a note tab
 let tabs = [];
 let navSeen = 0;
+let prefsSeen = 0;
+let interactions = null;
 let prefs = { renderMode: 'aligned' };
 let keys = keymap();
 const palette = () => prefs.palette?.length ? prefs.palette : DEFAULT_PALETTE;
@@ -467,6 +470,9 @@ function openAsk() {
   $('comment').hidden = true;
   $('toolbarNote').hidden = true;
   $('askInput').hidden = false;
+  $('askActions').hidden = false;
+  $('askDraft').hidden = $('askTarget').hidden = !host.extensions?.message;
+  $('askTarget').value = 'active';
   $('askInput').value = '';
   placeToolbar();
   $('askInput').focus();
@@ -474,6 +480,7 @@ function openAsk() {
 
 function closeAsk() {
   $('askInput').hidden = true;
+  $('askActions').hidden = true;
   $('addContext').hidden = false;
   $('ask').hidden = false;
   $('highlight').hidden = false;
@@ -481,16 +488,18 @@ function closeAsk() {
   placeToolbar();
 }
 
-async function sendAsk() {
+async function sendAsk(options = {}) {
   const question = $('askInput').value;
-  closeAsk();
+  if (conversation.sending) return;
+  for (const b of $('askActions').querySelectorAll('button')) b.disabled = true;
   note('正在发送…');
   try {
-    await conversation.ask(question);
-    note('已发送到对话');
+    await conversation.ask(question, { target: $('askTarget').value, ...options });
+    closeAsk();
+    note(options.send === false ? '已放入草稿，尚未发送' : '已发送到对话');
   } catch (e) {
     note(`发送失败：${e.message}`);
-  }
+  } finally { for (const b of $('askActions').querySelectorAll('button')) b.disabled = false; }
 }
 
 // A short word in the toolbar itself; nothing pops up elsewhere.
@@ -617,6 +626,7 @@ function onKey(e) {
     if (e.key === 'Escape') closePageInput(false);
     return;
   }
+  if (e.key !== 'Escape' && e.target.matches?.('input, textarea, select')) return;
   // Fixed keys first: ⌘1–9 tabs, Esc, ⌘C, 1–9 colors.
   if (e.metaKey && !e.shiftKey && !e.altKey && /^Digit[1-9]$/.test(e.code)) {
     const t = e.code === 'Digit9' ? tabs.at(-1) : tabs[Number(e.code.slice(5)) - 1];
@@ -680,8 +690,14 @@ function toggleDrawer() {
 async function poll() {
   try {
     const r = await host.call('panel_poll', { instance, seen: navSeen });
+    if (r.prefsRevision !== undefined && r.prefsRevision !== prefsSeen) {
+      prefsSeen = r.prefsRevision;
+      applyPrefs((await host.call('prefs_get')).prefs);
+      if (settings.isOpen) settings.render();
+    }
     if (r.superseded) {
       conversation.retire();
+      interactions?.destroy();
       annotations.stop();
       popup.close();
       drawer.close();
@@ -801,7 +817,7 @@ async function main() {
   window.addEventListener('blur', () => document.body.classList.remove('alt'));
   $('scroller').addEventListener('scroll', () => requestAnimationFrame(() => { placeToolbar(); popup.place(); }), { passive: true });
   // The toolbar must not take the click as a "click on the page", which would clear the selection.
-  $('toolbar').addEventListener('mousedown', e => { if (e.target.id !== 'askInput') e.preventDefault(); e.stopPropagation(); });
+  $('toolbar').addEventListener('mousedown', e => { if (!e.target.matches('input, textarea, select')) e.preventDefault(); e.stopPropagation(); });
   $('addContext').addEventListener('click', () => contexts.add());
   $('layoutButton').addEventListener('click', async () => {
     try { applyPrefs((await host.call('prefs_set', { layoutEnabled: prefs.layoutEnabled === false })).prefs); } catch(e) { analysisNotice(e.message); }
@@ -811,6 +827,8 @@ async function main() {
     $('ocrButton').setAttribute('aria-expanded', String(!$('ocrPanel').hidden));
   });
   $('ask').addEventListener('click', openAsk);
+  $('askSend').addEventListener('click', () => sendAsk());
+  $('askDraft').addEventListener('click', () => sendAsk({ send: false }));
   $('comment').addEventListener('click', commentSelection);
   $('highlight').addEventListener('click', () => highlightSelection());
   $('annButton').addEventListener('click', toggleDrawer);
@@ -850,6 +868,16 @@ async function main() {
   window.__find = find;
   window.__links = links;
   await start();
+  interactions = new Interactions({ host, reader, selection, conversation, contexts, openTab, showHome, notify: analysisNotice,
+    showFile: opened => { tabs = opened.tabs; showTab(opened.active); } });
+  interactions.start();
+  if (host.app) host.app.onteardown = async () => {
+    interactions.destroy();
+    clearTimeout(conversation.timer);
+    if (doc && reader.doc) await host.call('position_save', { docId: doc.id, ...reader.position() }).catch(() => {});
+    annotations.stop();
+    return {};
+  };
   poll();
 }
 
