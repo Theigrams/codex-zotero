@@ -16,11 +16,13 @@ export class DocumentAnalysis {
   file(doc) { return join(doc.cacheDir, 'ocr-v1.json'); }
   async record(doc) { return jsonFile(this.file(doc), { source: 'original', pages: {} }); }
   async status(doc) {
-    const record = await this.record(doc);
+    // Snapshot progress before async reads. A poll must not combine an old empty cache
+    // with a job that became done while this request was waiting on disk.
     const job = this.jobs.get(doc.id);
+    const snapshot = job ? { id: job.id, state: job.state, done: job.done, total: job.total, from: job.from, to: job.to, error: job.error || '' } : null;
+    const record = await this.record(doc);
     return { configured: await this.mineru.configured(), source: record.source,
-      pages: Object.keys(record.pages).map(Number),
-      job: job ? { id: job.id, state: job.state, done: job.done, total: job.total, from: job.from, to: job.to, error: job.error || '' } : null };
+      pages: Object.keys(record.pages).map(Number), job: snapshot };
   }
   async setSource(doc, source) {
     if (!['original', 'ocr'].includes(source)) throw new Error('未知的文字来源。');
@@ -86,8 +88,9 @@ export class DocumentAnalysis {
         await this.worker.call({ op: 'slice', path: doc.path, from, to, output: file });
         job.controller.signal.throwIfAborted();
         const pages = await this.mineru.recognize({ file, first: from, pageSizes: doc.pages.slice(from-1, to), signal: job.controller.signal,
-          progress: state => { if (!job.controller.signal.aborted) job.state = state; } });
+          progress: state => { if (!job.controller.signal.aborted) job.state = state === 'done' ? 'finalizing' : state; } });
         job.controller.signal.throwIfAborted();
+        job.state = 'finalizing';
         const record = await this.record(doc);
         await atomicJSON(this.file(doc), { source: 'ocr', pages: { ...record.pages, ...pages } });
         job.done += to-from+1;

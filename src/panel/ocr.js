@@ -1,5 +1,5 @@
 const $ = id => document.getElementById(id);
-const LABELS = { preparing:'正在准备页面…', uploading:'正在上传…', 'waiting-file':'等待接收…', pending:'正在排队…', running:'正在识别…', converting:'正在整理结果…', done:'识别完成', cancelled:'已取消', failed:'识别失败' };
+const LABELS = { preparing:'正在准备页面…', uploading:'正在上传…', 'waiting-file':'等待接收…', pending:'正在排队…', running:'正在识别…', converting:'正在整理结果…', downloading:'正在下载识别结果…', finalizing:'正在保存识别结果…', done:'识别完成', cancelled:'已取消', failed:'识别失败' };
 export class OcrPanel {
   constructor({ reader, call, onChanged, onError }) {
     Object.assign(this, { reader, call, onChanged, onError }); this.generation = 0;
@@ -24,8 +24,11 @@ export class OcrPanel {
     try {
       const r = await this.call('ocr_job_status', { docId:doc.id });
       if (generation !== this.generation || this.reader.doc?.id !== doc.id) return;
-      const job = r.job, busy = job && !['done','failed','cancelled'].includes(job.state);
-      $('ocrStatus').textContent = job ? `${LABELS[job.state] || '处理中…'}${busy ? ` ${job.done} / ${job.total} 页` : ''}${job.error ? `：${job.error}` : ''}` : '尚未启动高精度识别';
+      const job = r.job;
+      // Older servers may report remote completion before the cache is committed.
+      const finalizing = job?.state === 'done' && (job.done < job.total || !r.pages.length);
+      const busy = job && (finalizing || !['done','failed','cancelled'].includes(job.state));
+      $('ocrStatus').textContent = job ? `${LABELS[finalizing ? 'finalizing' : job.state] || '处理中…'}${busy ? ` ${job.done} / ${job.total} 页` : ''}${job.error ? `：${job.error}` : ''}` : '尚未启动高精度识别';
       $('ocrPage').textContent = `识别本页（第 ${this.reader.currentPage()} 页）`;
       $('ocrDocument').textContent = `识别整篇（${doc.pageCount} 页）`;
       $('ocrPage').disabled = !r.configured || busy; $('ocrDocument').disabled = !r.configured || busy;
@@ -33,7 +36,7 @@ export class OcrPanel {
       $('ocrCached').textContent = r.pages.length ? `已识别 ${r.pages.length} 页；未识别的页面继续使用原文。` : '原文由本机提取；识别结果单独缓存。';
       $('ocrConfig').hidden = r.configured;
       $('ocrBadge').textContent = busy ? '识别中' : r.source === 'ocr' ? 'OCR' : 'OCR…';
-      const complete = job?.state === 'done' ? job.id : null;
+      const complete = job?.state === 'done' && !finalizing ? job.id : null;
       if (complete && complete !== this.lastDone) { this.lastDone = complete; this.onChanged(); }
       if (busy) this.timer = setTimeout(() => this.refresh(), 2000);
     } catch(e) { if (generation === this.generation) this.onError(e.message); }

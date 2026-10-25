@@ -107,3 +107,45 @@ test('model reads and searches selected OCR while native glyph positions stay in
  assert.equal((await paper.find(doc,'OCR-only'))[0].source,'ocr');
  assert.deepEqual(native.b,[0,0,10,10]);
 });
+
+test('remote done stays downloading until the ZIP is available', async () => {
+ const dir=await mkdtemp(join(tmpdir(),'mineru-download-'));
+ const file=join(dir,'one.pdf');await writeFile(file,'%PDF-test');
+ const secretFile=join(dir,'secret.json');await writeFile(secretFile,JSON.stringify({apiKey:'test-secret'}));
+ const states=[];let release, downloading;
+ const requested=new Promise(resolve=>{downloading=resolve;});
+ const client=new MinerU({secretFile,fetchImpl:async(url)=>{
+   if(url.endsWith('file-urls/batch'))return Response.json({code:0,data:{batch_id:'test',file_urls:['https://upload.example/a']}});
+   if(url==='https://upload.example/a')return new Response('');
+   if(url.includes('extract-results'))return Response.json({code:0,data:{extract_result:[{state:'done',full_zip_url:'https://download.example/a.zip'}]}});
+   downloading();return new Promise(resolve=>{release=()=>resolve(new Response(zip()));});
+ }});
+ try {
+   const task=client.recognize({file,first:1,pageSizes:[size],signal:new AbortController().signal,progress:state=>states.push(state)});
+   await requested;assert.equal(states.at(-1),'downloading');assert.ok(!states.includes('done'));
+   release();assert.equal((await task)[1].text,item.text);assert.equal(states.at(-1),'finalizing');
+ }finally{await rm(dir,{recursive:true,force:true});}
+});
+
+test('OCR completion is published only after parsed results are cached',async()=>{
+ const root=await mkdtemp(join(tmpdir(),'ocr-finalize-'));let release, ready;
+ const preparing=new Promise(resolve=>{ready=resolve;});
+ const analysis=new DocumentAnalysis({worker:{async call(){}},mineru:{async configured(){return true;},async recognize({progress}){
+   progress('done');ready();return new Promise(resolve=>{release=()=>resolve({1:{text:'ready',blocks:[]}});});
+ }}});
+ const doc={id:'one',path:'one.pdf',cacheDir:root,pageCount:1,pages:[size]};
+ try{
+   await analysis.start(doc,{scope:'page',page:1});await preparing;
+   const pending=await analysis.status(doc);assert.equal(pending.job.state,'finalizing');assert.deepEqual(pending.pages,[]);
+   release();await analysis.jobs.get(doc.id).promise;
+   const done=await analysis.status(doc);assert.equal(done.job.state,'done');assert.equal(done.job.done,1);assert.deepEqual(done.pages,[1]);assert.equal(done.source,'ocr');
+ }finally{await rm(root,{recursive:true,force:true});}
+});
+
+test('status cannot mix an earlier empty cache with newer done progress',async()=>{
+ const analysis=new DocumentAnalysis({worker:{},mineru:{async configured(){return true;}}});
+ const job={id:'test',state:'running',done:0,total:1,from:1,to:1};analysis.jobs.set('one',job);
+ analysis.record=async()=>{job.state='done';job.done=1;return {source:'original',pages:{}};};
+ const status=await analysis.status({id:'one'});
+ assert.equal(status.job.state,'running');assert.equal(status.job.done,0);assert.deepEqual(status.pages,[]);
+});

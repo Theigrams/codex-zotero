@@ -139,13 +139,16 @@ export class MinerU {
       const batch = await this.json(`extract-results/batch/${encodeURIComponent(data.batch_id)}`, { token, signal });
       const item = batch.extract_result?.[0];
       if (item?.state === 'failed') throw new Error('MinerU 识别失败，请检查 PDF 或稍后重试。');
-      progress(item?.state || 'pending', item?.extract_progress);
       if (item?.state === 'done') {
+        // Remote completion precedes downloading, decoding and committing the local result.
+        progress('downloading');
         const zip = await limitedBytes(await this.fetchImpl(signedUrl(item.full_zip_url, this.api), {
           redirect: 'error', signal: AbortSignal.any([signal, AbortSignal.timeout(120000)]),
         }), MAX_ZIP);
+        progress('finalizing');
         return readOcrZip(zip, first, pageSizes);
       }
+      progress(item?.state || 'pending', item?.extract_progress);
       await this.sleep(3000, signal);
     }
     throw new Error('MinerU 识别超过 15 分钟，请稍后重试。');
