@@ -423,7 +423,9 @@ function toggleSettings() {
 // After the settings drawer saved something: the render mode, colors and keys take effect at once.
 function applyPrefs(next) {
   const mode = prefs.renderMode;
+  const ocrChanged = prefs.allowModelOcr !== next.allowModelOcr || prefs.mineruConfigured !== next.mineruConfigured;
   prefs = next;
+  if (ocrChanged && reader?.doc) ocr?.refresh();
   keys = keymap(prefs.keys);
   if (prefs.renderMode !== mode) reader?.setMode(prefs.renderMode);
   blocks?.outline(null);
@@ -604,7 +606,7 @@ function runAction(id) {
 function onKey(e) {
   if (e.key === 'Alt') document.body.classList.add('alt');
   if (['annComment', 'findInput', 'search'].includes(e.target.id)) return; // these handle their own keys
-  if (e.target.closest?.('#settings') && e.target.matches('input[type=text], textarea')) return;
+  if (e.target.closest?.('#settings') && e.target.matches('input[type=text], input[type=password], textarea')) return;
   if (e.target.id === 'askInput') {
     if (e.key === 'Enter' && !e.isComposing) sendAsk();
     if (e.key === 'Escape') closeAsk();

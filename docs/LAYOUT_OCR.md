@@ -8,7 +8,7 @@
 - 顶栏「OCR」只有「识别整篇」；已有完整结果时显示「重新识别整篇」。后台任务可取消。完整结果就绪后自动用于全文、搜索和版面块，不再提供原文/OCR 来源切换。顶栏状态变为「全文」。
 - 整篇仍按每批最多 200 页处理，每片不得超过 200 MB；所有批次就绪后一次性提交新版本。取消或失败保留上一份完整结果。旧单页缓存不会冒充全文，也不会使新旧来源混用。
 - 版面块直接采用完整 MinerU 结果的边界、类别、文字；只有缺少可用边界的页面才回退本地检测。原有逐字拖选保留 PDFKit/MuPDF 的真实字形坐标，不伪造 OCR 字符位置。
-- 全文统一由模型按当前问题决定是否读取，不提供读取时机选项，也不在首次提问时强制读取。独立的「允许模型按需识别」开关默认关闭，开启后才允许模型自行决定上传该论文。用户明确要求 OCR 时也可启动。
+- 全文统一由模型按当前问题决定是否读取，不提供读取时机选项，也不在首次提问时强制读取。「允许模型按需识别」位于全局设置，对所有论文生效；配置 MinerU API key 后默认开启，显式关闭后会一直保留关闭状态。模型按任务需要决定是否上传；已有完整结果直接复用。论文 OCR 面板不再显示权限开关。
 
 ## 全文进入对话的方式
 
@@ -26,20 +26,20 @@
 
 **明确触发的整篇 OCR：** 本机切片 → MinerU v4 `file-urls/batch` → PUT 到签名地址 → `extract-results/batch` 轮询 → 内存解包结构化内容 → 全文验证 → 原子提交。`model_version=vlm`、`is_ocr=true`，开启公式和表格。支持 content-list v1/v2 与旧版 middle.json；保留原 PDF 页序和点坐标。取消可阻止提交，但不保证撤回已上传的远端任务。
 
-完整缓存保存于文档指纹目录的 `ocr-v1.json`，兼容已有完整结果并忽略旧版手动来源字段；模型识别权限另存 `analysis-settings.json`。不覆写 PDF、Zotero 附件或本机文字缓存。旧版“首次提问读取”设置被忽略。不存储跨对话的“已读”标记。正文与版本在本地内存复用，磁盘文件变更时失效。
+完整缓存保存于文档指纹目录的 `ocr-v1.json`，兼容已有完整结果并忽略旧版手动来源字段；模型识别权限保存在全局 `preferences.json` 的 `allowModelOcr` 字段，旧的单篇 `analysis-settings.json` 被忽略。不覆写 PDF、Zotero 附件或本机文字缓存。旧版“首次提问读取”设置被忽略。不存储跨对话的“已读”标记。正文与版本在本地内存复用，磁盘文件变更时失效。
 
 ## 安装与配置
 
 ```sh
 npm install
 npm run setup-analysis
-npm run configure-mineru
+# 在阅读器「设置 → MinerU 识别」填写 API key
 npm run install-plugin
 ```
 
 `setup-analysis` 安装独立 Python 环境，下载约 204 MiB 的 PP-DocLayoutV2 ONNX 文件并核验 SHA-256。模型不进 Git、不打包进插件。环境默认是 `~/.codex/codex-zotero-runtime`，模型默认是 `~/.cache/codex-zotero/models/pp-doclayout-v2.onnx`。可用 `CODEX_ZOTERO_PYTHON` 和 `CODEX_ZOTERO_LAYOUT_MODEL` 指定兼容路径。
 
-`configure-mineru` 交互式读取 key，不回显；只写入 `~/.codex/codex-zotero/mineru-secret.json`（权限 0600）。也支持服务端 `MINERU_API_KEY` 环境变量。key 不放在页面、tool 参数、`preferences.json` 或 Git 中。生产默认固定使用 `https://mineru.net/api/v4/`；`CODEX_ZOTERO_MINERU_API` 仅供开发/自托管测试覆盖，不能通过 UI 或模型工具修改。
+阅读器全局设置提供密码输入框，保存后清空，只显示配置状态。`mineru_configure` 仅对 App 开放，不对模型开放；只写入 `~/.codex/codex-zotero/mineru-secret.json`（权限 0600）。也保留 `npm run configure-mineru` 和服务端 `MINERU_API_KEY` 环境变量。设置中保存的密钥优先于环境变量，便于直接更换。密钥仅在填写和保存请求期间经过页面与 App 专用工具，不返回给页面、不加入模型上下文，不写入 `preferences.json` 或 Git。保存不会自动上传论文；“已配置”表示已保存，不表示已验证远端额度或有效性。生产默认固定使用 `https://mineru.net/api/v4/`；`CODEX_ZOTERO_MINERU_API` 仅供开发/自托管测试覆盖，不能通过 UI 或模型工具修改。
 
 `install-plugin` 会优先检测上述独立环境；更换运行路径后重新安装。服务代码更新后需完全退出并重启 Codex。
 

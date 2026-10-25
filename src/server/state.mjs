@@ -9,7 +9,7 @@ import { DEFAULT_RENDER_MODE, RENDER_MODES } from '../shared/layout.mjs';
 import { atomicJSON, jsonFile } from './files.mjs';
 
 // keys: only the user's overrides (combo, or null for unbound); mapPrompt / mapModel / mapEffort / readingQuestions: '' means the default.
-const DEFAULT_PREFS = { layoutEnabled: true, renderMode: DEFAULT_RENDER_MODE, palette: DEFAULT_PALETTE, keys: {}, mapPrompt: '', mapModel: '', mapEffort: '', readingQuestions: '' };
+const DEFAULT_PREFS = { allowModelOcr: true, layoutEnabled: true, renderMode: DEFAULT_RENDER_MODE, palette: DEFAULT_PALETTE, keys: {}, mapPrompt: '', mapModel: '', mapEffort: '', readingQuestions: '' };
 const MAX_PROMPT = 20000;
 // The first default palette (疑问 marked for answers by a flag); saved copies of it give way to the current default.
 const OLD_DEFAULT = ['#ffd400重点', '#a28ae5疑问', '#2ea8e5定义', '#5fb236启发', '#ff6666存疑'];
@@ -37,6 +37,10 @@ export class State {
 
   async writePrefs(patch) {
     const next = { ...(await this.prefs()) };
+    if (patch.allowModelOcr !== undefined) {
+      if (typeof patch.allowModelOcr !== 'boolean') throw new Error('模型识别设置无效。');
+      next.allowModelOcr = patch.allowModelOcr;
+    }
     if (patch.layoutEnabled !== undefined) {
       if (typeof patch.layoutEnabled !== 'boolean') throw new Error('版面识别设置无效。');
       next.layoutEnabled = patch.layoutEnabled;

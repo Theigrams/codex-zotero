@@ -242,6 +242,7 @@
   #settings h3:first-of-type { margin-top: 4px; }
   #settings .hint { margin: 0 0 6px; color: var(--muted); font-size: 12px; }
   #settings .note { margin: 4px 0 0; color: #c0392b; font-size: 12px; }
+  #settings .note.success { color:var(--muted); }
   #settings .note:empty { display: none; }
   #settings .row { display: flex; align-items: center; gap: 8px; margin-top: 4px; }
   #settings .spacer { flex: 1; }
@@ -358,6 +359,16 @@
 
 <aside id="settings" class="drawer" hidden aria-label="设置">
   <header><h2>设置</h2><button id="settingsClose" aria-label="关闭">✕</button></header>
+  <h3>MinerU 识别</h3>
+  <p id="mineruState" class="hint" role="status"></p>
+  <form id="mineruForm" autocomplete="off">
+    <label class="field" for="mineruKey"><span>API key</span><input id="mineruKey" type="password" maxlength="4096" autocomplete="new-password" spellcheck="false" autocapitalize="off" placeholder="填写 MinerU API key"></label>
+    <div class="row"><span class="spacer"></span><button id="mineruSave" class="link" type="submit">保存密钥</button></div>
+  </form>
+  <p id="mineruNote" class="note" role="status"></p>
+  <label class="radio"><input id="allowModelOcr" type="checkbox"><span>允许模型按需识别</span>
+    <small>对所有论文生效。配置密钥后默认开启；模型按问题需要识别整篇，已有结果直接复用。</small></label>
+  <p id="ocrSettingsNote" class="note" role="status"></p>
   <h3>渲染方式</h3>
   <label class="radio"><input type="radio" name="renderMode" value="aligned"><span>像素对齐 + 近灰加深</span>
     <small>最锐利，字更有分量。默认。</small></label>
@@ -401,8 +412,7 @@
   <p id="ocrConfig" hidden>尚未配置 MinerU，请先完成插件的识别服务设置。</p>
   <p id="ocrCached"></p>
   <p>模型会在需要时读取全文，并复用当前对话中已读的内容。</p>
-  <label for="ocrAllowModel">允许模型按需识别<input id="ocrAllowModel" type="checkbox"></label>
-  <p>仅对此论文生效。开启后，模型可将整篇上传至 MinerU；打开论文不会自动上传。</p>
+
 </section>
 <div id="contextTray" aria-label="已加入的上下文" hidden><span id="contextCount">上下文</span><ul id="contextList"></ul><button id="contextClear">清空</button></div>
 <div id="toolbar" hidden>

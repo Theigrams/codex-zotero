@@ -53,10 +53,12 @@ const text = new TextService({
 });
 
 const analysis = new DocumentAnalysis({
+  preferences: () => state.prefs(),
   worker: new DocumentWorker({ python: process.env.CODEX_ZOTERO_PYTHON || '', script: join(here, 'document_worker.py'),
     model: process.env.CODEX_ZOTERO_LAYOUT_MODEL || join(homedir(), '.cache', 'codex-zotero', 'models', 'pp-doclayout-v2.onnx') }),
   mineru: new MinerU({ api: process.env.CODEX_ZOTERO_MINERU_API || undefined, secretFile: join(stateRoot, 'mineru-secret.json') }),
 });
+async function readerPrefs() { return { ...await state.prefs(), mineruConfigured: await analysis.mineru.configured() }; }
 text.ocrText = (doc, page) => analysis.pageText(doc, page);
 const paper = new Paper(text);
 const maps = new PaperMaps({ writer: annotations.writer, paper, pool, settings: () => state.prefs() });
@@ -176,7 +178,8 @@ const appTools = {
   async ocr_job_status({ docId }) { return analysis.status(documents.get(docId)); },
   async ocr_job_start({ docId, force }) { return analysis.start(documents.get(docId), { force }); },
   async ocr_job_cancel({ docId }) { return analysis.cancel(documents.get(docId)); },
-  async ocr_settings({ docId, ...patch }) { return analysis.setSettings(documents.get(docId), patch); },
+  async mineru_configure({ apiKey }) { await analysis.mineru.configure(apiKey); return { prefs: await readerPrefs() }; },
+  async prefs_get() { return { prefs: await readerPrefs() }; },
   async panel_hello({ instance }) {
     activeInstance = instance;
     lastPoll = Date.now();
@@ -190,7 +193,7 @@ const appTools = {
         error = e.message;
       }
     }
-    return { prefs: await state.prefs(), ...view, active, error, navSeq: nav.seq, ...(FAST ? { timing: { navPollMs: 200, annotationsPollMs: 300, mapPollMs: 300 } } : {}) };
+    return { prefs: await readerPrefs(), ...view, active, error, navSeq: nav.seq, ...(FAST ? { timing: { navPollMs: 200, annotationsPollMs: 300, mapPollMs: 300 } } : {}) };
   },
   async panel_poll({ instance, seen = 0 }) {
     const superseded = activeInstance !== null && instance !== activeInstance;
@@ -272,7 +275,8 @@ const appTools = {
     return { saved: true };
   },
   async prefs_set(patch) {
-    return { prefs: await state.setPrefs(patch) };
+    await state.setPrefs(patch);
+    return { prefs: await readerPrefs() };
   },
   async page_text({ docId, page }) {
     return text.page(documents.get(docId), page);
@@ -331,7 +335,8 @@ const appSchemas = {
   ocr_job_status: { docId: z.string() },
   ocr_job_start: { docId: z.string(), force: z.boolean().optional() },
   ocr_job_cancel: { docId: z.string() },
-  ocr_settings: { docId: z.string(), allowModelOcr: z.boolean().optional() },
+  mineru_configure: { apiKey: z.string().min(1).max(4096) },
+  prefs_get: {},
   panel_hello: { instance: z.string().max(40) },
   panel_poll: { instance: z.string().max(40), seen: z.number().int().min(0).optional() },
   tab_open: { docId: z.string().optional(), itemKey: z.string().regex(/^[A-Z0-9]{8}$/).optional() },
@@ -358,6 +363,7 @@ const appSchemas = {
   render_preview: { docId: z.string(), page: z.number().int().min(1), crop: z.boolean().optional() },
   position_save: { docId: z.string(), page: z.number().int().min(1), offset: z.number(), zoom: z.number() },
   prefs_set: {
+    allowModelOcr: z.boolean().optional(),
     layoutEnabled: z.boolean().optional(),
     renderMode: z.enum(RENDER_MODES).optional(),
     palette: z.array(z.object({ color: z.string(), tag: z.string() })).max(9).nullable().optional(),

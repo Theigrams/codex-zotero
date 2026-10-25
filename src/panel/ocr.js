@@ -6,18 +6,10 @@ export class OcrPanel {
     $('ocrDocument').onclick = () => this.start();
     $('ocrCancel').onclick = async () => { try { await this.call('ocr_job_cancel', { docId:this.reader.doc.id }); this.refresh(); } catch(e) { this.onError(e.message); } };
     $('ocrClose').onclick = () => this.close();
-    $('ocrAllowModel').onchange = () => this.settings({ allowModelOcr: $('ocrAllowModel').checked });
   }
   open() { if (!this.reader.doc) return; $('ocrPanel').hidden = false; this.refresh(); }
   close() { $('ocrPanel').hidden = true; $('ocrButton').setAttribute('aria-expanded', 'false'); }
   reset() { this.generation++; clearTimeout(this.timer); this.close(); this.lastVersion = null; this.lastDone = null; this.status = null; }
-  async settings(patch) {
-    const doc = this.reader.doc; if (!doc) return;
-    $('ocrAllowModel').disabled = true;
-    try { await this.call('ocr_settings', { docId: doc.id, ...patch }); }
-    catch (e) { this.onError(e.message); }
-    finally { this.refresh(); }
-  }
   async start() {
     const doc = this.reader.doc; if (!doc || this.starting) return;
     this.starting = true; $('ocrDocument').disabled = true;
@@ -35,7 +27,7 @@ export class OcrPanel {
       if (generation !== this.generation || this.reader.doc?.id !== doc.id || request !== this.request) return;
       if (typeof r.complete !== 'boolean') {
         $('ocrStatus').textContent = '插件已更新，请重启 Codex 以启用全文功能。';
-        $('ocrDocument').disabled = true; $('ocrAllowModel').disabled = true;
+        $('ocrDocument').disabled = true;
         return;
       }
       this.status = r;
@@ -45,8 +37,6 @@ export class OcrPanel {
       $('ocrDocument').disabled = !r.configured || !!busy || this.starting;
       $('ocrCancel').hidden = !busy || job.state === 'committing';
       $('ocrCached').textContent = r.complete ? `已自动使用 MinerU 全文和版面 · ${doc.pageCount} 页` : r.pages.length ? `旧版缓存仅含 ${r.pages.length} 页；识别整篇后统一使用完整结果。` : '识别前使用本机提取的文字和版面。';
-      $('ocrAllowModel').disabled = false;
-      $('ocrAllowModel').checked = r.settings.allowModelOcr;
       $('ocrConfig').hidden = r.configured;
       $('ocrBadge').textContent = busy ? '识别中' : r.complete ? '全文' : 'OCR';
       this.onStatus?.(doc.id, r);

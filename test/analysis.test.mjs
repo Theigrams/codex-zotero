@@ -195,23 +195,24 @@ test('full text has bounded lossless pagination, revision guards, and no global 
  }finally{await rm(root,{recursive:true,force:true});}
 });
 
-test('model OCR honors per-paper permission; reading full text never starts cloud work',async()=>{
+test('model OCR honors global permission; reading full text never starts cloud work',async()=>{
  const {modelTools}=await import('../src/server/tools.mjs');
  const root=await mkdtemp(join(tmpdir(),'ocr-permission-'));let uploads=0;
- const analysis=new DocumentAnalysis({worker:{call:async()=>{}},mineru:{configured:async()=>true,recognize:async()=>{uploads++;return {1:{text:'Full body',blocks:[]}};}}});
+ const state=new State(root);await state.setPrefs({allowModelOcr:false});
+ const analysis=new DocumentAnalysis({preferences:()=>state.prefs(),worker:{call:async()=>{}},mineru:{configured:async()=>true,recognize:async()=>{uploads++;return {1:{text:'Full body',blocks:[]}};}}});
  const doc={id:'one',path:'test.pdf',cacheDir:root,pageCount:1,pages:[size]};
  const tools=modelTools({analysis,activeDoc:async()=>doc});
  try{
   const blocked=await tools.ocr_start.run({});assert.equal(blocked.data.blocked,true);assert.equal(uploads,0);
   assert.equal((await tools.paper_full_text.run({})).data.status,'unavailable');assert.equal(uploads,0);
   await writeFile(join(root,'analysis-settings.json'),JSON.stringify({contextMode:'first-question',allowModelOcr:false}));
-  assert.equal((await analysis.settings(doc)).contextMode,undefined,'legacy mode ignored');
+  assert.equal((await analysis.settings()).contextMode,undefined,'legacy mode ignored');
   assert.equal((await tools.ocr_start.run({})).data.blocked,true,'reading preference is not upload permission');
-  await analysis.setSettings(doc,{allowModelOcr:true});
+  await state.setPrefs({allowModelOcr:true});
   await Promise.all([tools.ocr_start.run({}),tools.ocr_start.run({})]);await analysis.jobs.get(doc.id).promise;
   assert.equal(uploads,1,'concurrent starts share a job');
   const full=await tools.paper_full_text.run({});assert.match(full.text,/Full body/);assert.equal(full.data.text,undefined,'body is not duplicated in structuredContent');
-  await analysis.setSettings(doc,{allowModelOcr:false});await tools.ocr_start.run({});assert.equal(uploads,1,'existing cache remains usable');
+  await state.setPrefs({allowModelOcr:false});await tools.ocr_start.run({});assert.equal(uploads,1,'existing cache remains usable');
  }finally{await rm(root,{recursive:true,force:true});}
 });
 
@@ -243,4 +244,39 @@ test('panel questions flush the retrieval policy in background without inserting
    const questions=events.filter(e=>e.kind==='message');assert.equal(questions.length,2);
    for(const q of questions){assert.doesNotMatch(q.content[0].text,/paper_full_text|knownVersion/);assert.match(q.content[0].text,/A selection/);}
  }finally{clearTimeout(conversation?.timer);globalThis.window=previous;}
+});
+
+test('global OCR defaults follow key availability, persist explicit opt-out, and ignore old per-paper overrides',async()=>{
+ const root=await mkdtemp(join(tmpdir(),'global-ocr-'));let configured=false;
+ const state=new State(root);
+ const analysis=new DocumentAnalysis({preferences:()=>state.prefs(),worker:{},mineru:{configured:async()=>configured}});
+ const doc={id:'paper-a',pageCount:1,cacheDir:root};
+ try {
+   assert.equal((await analysis.status(doc)).settings.allowModelOcr,false);
+   configured=true;assert.equal((await analysis.status(doc)).settings.allowModelOcr,true);
+   await writeFile(join(root,'analysis-settings.json'),JSON.stringify({allowModelOcr:false}));
+   assert.equal((await analysis.status(doc)).settings.allowModelOcr,true);
+   await state.setPrefs({allowModelOcr:false});
+   const other=new DocumentAnalysis({preferences:()=>new State(root).prefs(),worker:{},mineru:{configured:async()=>configured}});
+   assert.equal((await other.status({...doc,id:'paper-b'})).settings.allowModelOcr,false);
+   configured=false;configured=true;
+   assert.equal((await other.status(doc)).settings.allowModelOcr,false);
+ }finally{await rm(root,{recursive:true,force:true});}
+});
+
+test('MinerU key setup persists privately, never returns the key, and rejects invalid replacements',async()=>{
+ const {readFile,stat}=await import('node:fs/promises');
+ const root=await mkdtemp(join(tmpdir(),'mineru-setup-'));
+ const file=join(root,'secrets','mineru.json');
+ const client=new MinerU({secretFile:file});
+ try {
+   const reply=await client.configure('  private-test-key  ');
+   assert.deepEqual(reply,{configured:true});assert.doesNotMatch(JSON.stringify(reply),/private-test-key/);
+   assert.equal((await stat(file)).mode&0o777,0o600);
+   assert.equal(JSON.parse(await readFile(file,'utf8')).apiKey,'private-test-key');
+   assert.equal(await new MinerU({secretFile:file}).key(),'private-test-key');
+   await assert.rejects(client.configure('bad key'),/空白/);
+   assert.equal(await client.key(),'private-test-key');
+   await client.configure('replacement-test-key');assert.equal(await client.key(),'replacement-test-key');
+ }finally{await rm(root,{recursive:true,force:true});}
 });

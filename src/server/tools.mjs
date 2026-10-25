@@ -374,19 +374,19 @@ export function modelTools(ctx) {
       async run({ docId, page }) { const doc = await ctx.activeDoc(docId); const data = await ctx.analysis.layout(doc, page); return { data, text: JSON.stringify(data) }; },
     },
     ocr_status: {
-      description: 'Read whole-document OCR progress, full-text version/availability and per-paper context/OCR preferences. Does not upload or start OCR.',
+      description: 'Read whole-document OCR progress, full-text version/availability and global OCR permission. Does not upload or start OCR.',
       schema: docArg,
       async run({ docId }) { const data = await ctx.analysis.status(await ctx.activeDoc(docId)); return { data, text: JSON.stringify(data) }; },
     },
     ocr_start: {
-      description: 'Start whole-document MinerU OCR in the background. Reuses an existing complete result or active job; never re-uploads those. With userRequested=false, allowed only when the user enabled allowModelOcr for this paper. Set userRequested=true only for an explicit user request to recognize/upload this paper. Use ocr_status for progress, paper_full_text after completion. Do not start OCR merely because the paper was opened.',
+      description: 'Start whole-document MinerU OCR in the background. Reuses an existing complete result or active job; never re-uploads those. With userRequested=false, allowed when the global allowModelOcr setting is enabled (default with a configured key). Set userRequested=true only for an explicit user request to recognize/upload this paper. Use ocr_status for progress, paper_full_text after completion. Do not start OCR merely because the paper was opened.',
       schema: { ...docArg, userRequested: z.boolean().default(false).describe('True only for an explicit request from the user to OCR this paper.') },
       async run({ docId, userRequested = false }) {
         const doc = await ctx.activeDoc(docId);
         const status = await ctx.analysis.status(doc);
         const active = status.job && !['done', 'failed', 'cancelled'].includes(status.job.state);
         if (!status.complete && !active && !userRequested && !status.settings.allowModelOcr) {
-          return { data: { ...status, blocked: true }, text: '尚未允许模型按需识别这篇论文。继续用本机文字，或由用户在 OCR 面板开启“允许模型按需识别”。没有上传文件。' };
+          return { data: { ...status, blocked: true }, text: '模型按需识别当前不可用。请先在全局设置中配置 MinerU API key 并开启“允许模型按需识别”。没有上传文件。' };
         }
         const data = await ctx.analysis.start(doc);
         return { data, text: data.complete ? '完整 MinerU 结果已缓存，无需重复识别。用 paper_full_text 按需读取。' : '整篇 OCR 任务运行中；用 ocr_status 查询，完成后用 paper_full_text 读取。' };

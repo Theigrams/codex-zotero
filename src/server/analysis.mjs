@@ -8,8 +8,8 @@ const validPage = (doc, page) => {
   if (!Number.isInteger(page) || page < 1 || page > doc.pageCount) throw new Error('页码超出范围。');
 };
 export class DocumentAnalysis {
-  constructor({ worker, mineru }) {
-    Object.assign(this, { worker, mineru }); this.layouts = new Map(); this.jobs = new Map();
+  constructor({ worker, mineru, preferences = async () => ({}) }) {
+    Object.assign(this, { worker, mineru, preferences }); this.layouts = new Map(); this.jobs = new Map();
     this.records = new Map(); this.facts = new WeakMap();
   }
   file(doc) { return join(doc.cacheDir, 'ocr-v1.json'); }
@@ -32,28 +32,18 @@ export class DocumentAnalysis {
     const value = { pages, complete, body, version, characters: body.length };
     this.facts.set(record, value); return value;
   }
-  async settings(doc) {
-    const saved = await jsonFile(join(doc.cacheDir, 'analysis-settings.json'), {});
-    // Ignore retired reading-mode settings, including first-question in existing installs.
-    return { allowModelOcr: saved.allowModelOcr === true };
-  }
-  async setSettings(doc, patch) {
-    if (patch.allowModelOcr !== undefined && typeof patch.allowModelOcr !== 'boolean') throw new Error('识别设置无效。');
-    // Serialize independent controls without racing a concurrent preference write.
-    const run = (this.settingsQueue || Promise.resolve()).then(async () => {
-      const next = await this.settings(doc);
-      for (const key of ['allowModelOcr']) if (patch[key] !== undefined) next[key] = patch[key];
-      await atomicJSON(join(doc.cacheDir, 'analysis-settings.json'), next);
-      return this.status(doc);
-    });
-    this.settingsQueue = run.catch(() => {}); return run;
+  async settings(configured = undefined) {
+    // One global preference. Legacy per-document settings intentionally have no effect.
+    const ready = configured ?? await this.mineru.configured();
+    return { allowModelOcr: ready && (await this.preferences()).allowModelOcr !== false };
   }
   async status(doc) {
     const job = this.jobs.get(doc.id);
     const snapshot = job ? { id: job.id, state: job.state, done: job.done, total: job.total, error: job.error || '' } : null;
     const { pages, complete, version, characters } = this.describe(doc, await this.record(doc));
-    return { configured: await this.mineru.configured(), source: complete ? 'ocr' : 'original',
-      pages, complete, version, characters, settings: await this.settings(doc), job: snapshot };
+    const configured = await this.mineru.configured();
+    return { configured, source: complete ? 'ocr' : 'original',
+      pages, complete, version, characters, settings: await this.settings(configured), job: snapshot };
   }
   async fullText(doc, { knownVersion, version: expected, offset = 0, maxChars = 40000 } = {}) {
     const { complete, version, body, characters } = this.describe(doc, await this.record(doc));
@@ -100,7 +90,7 @@ export class DocumentAnalysis {
     const previous = this.jobs.get(doc.id);
     if (previous && !['done', 'failed', 'cancelled'].includes(previous.state)) return this.status(doc);
     if (!force && this.describe(doc, await this.record(doc)).complete) return this.status(doc);
-    if (!(await this.mineru.configured())) throw new Error('尚未配置 MinerU API key，请运行 npm run configure-mineru。');
+    if (!(await this.mineru.configured())) throw new Error('尚未配置 MinerU API key，请在阅读器设置中填写。');
     // Recheck after async I/O so simultaneous callers cannot start duplicate paid jobs.
     const current = this.jobs.get(doc.id);
     if (current && !['done', 'failed', 'cancelled'].includes(current.state)) return this.status(doc);

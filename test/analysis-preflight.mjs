@@ -20,7 +20,7 @@ const cloud=createServer(async(req,res)=>{
  else{res.statusCode=404;res.end();}
 });
 await new Promise(r=>cloud.listen(0,'127.0.0.1',r));base=`http://127.0.0.1:${cloud.address().port}`;
-const server=spawn(process.execPath,['out/plugin/dist/server.mjs','--standalone','--pdf',pdf],{env:{...process.env,CODEX_ZOTERO_STATE:join(root,'state'),CODEX_ZOTERO_CACHE:join(root,'cache'),CODEX_ZOTERO_MINERU_API:base+'/api/v4/',MINERU_API_KEY:'test-only'},stdio:['ignore','ignore','pipe']});
+const server=spawn(process.execPath,['out/plugin/dist/server.mjs','--standalone','--pdf',pdf],{env:{...process.env,CODEX_ZOTERO_STATE:join(root,'state'),CODEX_ZOTERO_CACHE:join(root,'cache'),CODEX_ZOTERO_MINERU_API:base+'/api/v4/',MINERU_API_KEY:''},stdio:['ignore','ignore','pipe']});
 const url=await new Promise((resolve,reject)=>{let text='';server.stderr.on('data',c=>{text+=c;const m=text.match(/standalone panel: (\S+)/);if(m)resolve(m[1]);});server.on('exit',()=>reject(new Error(text)));});
 let browser;
 try {
@@ -31,6 +31,26 @@ try {
  assert.equal(submits,0,'opening/layout must never upload');
  const result=await frame.evaluate(()=>{const v=[...window.__blocks.pages.values()][0];return {engine:v.engine,blocks:v.blocks.length};});
  assert.equal(result.engine,'pp-doclayout-v2');assert.ok(result.blocks>0);
+ // New users can configure MinerU entirely in global settings, without a terminal.
+ await frame.click('#settingsButton');
+ await frame.waitForFunction(()=>document.getElementById('allowModelOcr').disabled);
+ await frame.type('#mineruKey','ui-test-mineru-key');
+ assert.equal(await frame.$eval('#mineruKey',n=>n.type),'password');
+ assert.equal(await frame.$eval('#mineruKey',n=>n.value),'ui-test-mineru-key');
+ await frame.click('#mineruSave');
+ await frame.waitForFunction(()=>document.getElementById('allowModelOcr').checked&&window.__ocr.status.settings.allowModelOcr);
+ assert.equal(await frame.$eval('#mineruKey',n=>n.value),'');
+ assert.equal(submits,0,'saving a key never starts OCR');
+ if(process.argv.includes('--screenshot')) await host.screenshot({path:process.argv[process.argv.indexOf('--screenshot')+1].replace('.png','-settings.png')});
+ await frame.click('#allowModelOcr');
+ await frame.waitForFunction(()=>window.__ocr.status.settings.allowModelOcr===false);
+ await frame.type('#mineruKey','replacement-ui-test-key');
+ assert.equal(await frame.$eval('#mineruKey',n=>n.value),'replacement-ui-test-key','reader shortcuts must not intercept password input');
+ await frame.click('#mineruSave');
+ await frame.waitForFunction(()=>!document.getElementById('mineruSave').disabled&&document.getElementById('mineruKey').value==='');
+ assert.equal(await frame.$eval('#allowModelOcr',n=>n.checked),false,'changing key preserves the global opt-out');
+ assert.ok(!(await host.evaluate(()=>JSON.stringify(window.__modelContexts))).includes('ui-test-key'));
+ await frame.click('#settingsClose');
  // Select an actual detected block, then add it through the user control.
  await frame.evaluate(()=>{const b=[...window.__blocks.pages.values()][0].blocks.find(x=>x.type==='text')||[...window.__blocks.pages.values()][0].blocks[0];window.__blocks.select(1,[b.rect[0]+b.rect[2]/2,b.rect[1]+b.rect[3]/2]);});
  const selectedStyle=await frame.$eval('.region',n=>({border:getComputedStyle(n).borderTopStyle,fill:getComputedStyle(n).backgroundColor}));
@@ -126,7 +146,10 @@ try {
  const repeat=await model('paper_full_text',{knownVersion:first.data.version});assert.equal(repeat.data.status,'unchanged');assert.ok(!repeat.text.includes('Verified OCR result'));
  assert.equal((await model('paper_full_text')).data.status,'ready','fresh conversation can still retrieve');
  await model('ocr_start');assert.equal(submits,1,'complete result prevents a second cloud job');
- await frame.click('#ocrAllowModel');await frame.waitForFunction(()=>window.__ocr.status.settings.allowModelOcr===true);
+ assert.equal(await frame.$('#ocrAllowModel'),null,'per-paper permission removed');
+ await frame.click('#ocrClose');await frame.click('#settingsButton');
+ await frame.click('#allowModelOcr');await frame.waitForFunction(()=>window.__ocr.status.settings.allowModelOcr===true);
+ await frame.click('#settingsClose');await frame.click('#ocrButton');
  await frame.click('#ocrDocument');await frame.waitForFunction(()=>!document.getElementById('ocrDocument').disabled,{timeout:15000});
  assert.equal(submits,2,'only explicit re-recognition forces another job');
  if(process.argv.includes('--screenshot')) await host.screenshot({path:process.argv[process.argv.indexOf('--screenshot')+1].replace('.png','-ocr.png')});
@@ -135,5 +158,5 @@ try {
  // A narrow panel still exposes the controls and keeps context text in its own scroller.
  await host.setViewport({width:420,height:740});
  assert.equal(await frame.evaluate(()=>document.documentElement.scrollWidth<=window.innerWidth),true);
- console.log(JSON.stringify({pass:true,layout:result,checks:['no automatic cloud request','local model','block context thumbnail/group','host removal synchronization','unfilled solid selection and typed dashed hover','saved block tint','numbered page/tray linking','marker survives crop and zoom','download completion waits for usable local results','single-page/source controls removed','whole-document atomic source','compact on-demand policy','full text retrieval and version deduplication','per-paper model OCR permission','layout toggle','narrow panel'],cloudRequests:submits}));
+ console.log(JSON.stringify({pass:true,layout:result,checks:['no automatic cloud request','local model','block context thumbnail/group','host removal synchronization','unfilled solid selection and typed dashed hover','saved block tint','numbered page/tray linking','marker survives crop and zoom','download completion waits for usable local results','single-page/source controls removed','whole-document atomic source','compact on-demand policy','full text retrieval and version deduplication','global model OCR permission','password key setup without automatic upload','layout toggle','narrow panel'],cloudRequests:submits}));
 }finally{await browser?.close();server.kill();await new Promise(r=>cloud.close(r));await rm(root,{recursive:true,force:true});}

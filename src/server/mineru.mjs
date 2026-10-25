@@ -1,6 +1,7 @@
 // MinerU's v4 local-file flow: request upload URL -> PUT PDF -> poll batch -> read structured ZIP.
 // Only invoked by an explicit OCR action. The credential never leaves this module or enters a tool result.
 import { readFile } from 'node:fs/promises';
+import { atomicJSON } from './files.mjs';
 import { randomUUID } from 'node:crypto';
 import { unzipSync, strFromU8 } from 'fflate';
 import sanitizeHtml from 'sanitize-html';
@@ -104,9 +105,16 @@ export class MinerU {
     if (signal.aborted) abort();
   }), api = API }) { Object.assign(this, { secretFile, fetchImpl, sleep, api }); }
   async key() {
-    const key = process.env.MINERU_API_KEY || JSON.parse(await readFile(this.secretFile, 'utf8').catch(() => '{}')).apiKey;
-    if (!key || typeof key !== 'string') throw new Error('尚未配置 MinerU API key，请运行 npm run configure-mineru。');
+    const key = JSON.parse(await readFile(this.secretFile, 'utf8').catch(() => '{}')).apiKey || process.env.MINERU_API_KEY;
+    if (!key || typeof key !== 'string') throw new Error('尚未配置 MinerU API key，请在阅读器设置中填写。');
     return key.trim();
+  }
+  async configure(apiKey) {
+    const key = typeof apiKey === 'string' ? apiKey.trim() : '';
+    if (!key || key.length > 4096 || /\s/.test(key)) throw new Error('请输入有效的 MinerU API key，不能包含空白字符。');
+    try { await atomicJSON(this.secretFile, { apiKey: key }); }
+    catch { throw new Error('无法保存 MinerU API key，请检查本机配置目录的写入权限。'); }
+    return { configured: true }; // Never return the credential to the panel or the model.
   }
   async configured() { try { return !!(await this.key()); } catch { return false; } }
   async json(route, { token, signal, body } = {}) {
