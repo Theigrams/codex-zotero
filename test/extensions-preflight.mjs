@@ -26,24 +26,27 @@ try {
   await frame.waitForFunction(()=>window.__reader?.doc&&window.__webTools.reader_view);
   const view=JSON.parse(await frame.evaluate(()=>window.__webTools.reader_view.execute({})));
   assert.ok(view.docId);
+  assert.deepEqual(await page.evaluate(()=>window.__appCapabilities().availableDisplayModes),['fullscreen']);
   await frame.evaluate(()=>window.__webTools.reader_select_block.execute({page:1,index:0,attach:true}));
   await page.waitForFunction(()=>window.__modelContexts.at(-1)?.structuredContent.contextBlocks.length===1);
   await frame.click('#ask');
-  await page.waitForFunction(()=>window.__displayRequests.length===1);
-  assert.deepEqual(await page.evaluate(()=>window.__displayRequests),['inline']);
-  assert.equal(await page.evaluate(()=>window.__messages.length),0,'handoff must not append to or send the native draft');
+  await frame.waitForFunction(()=>document.body.textContent.includes('上下文已准备好'));
+  assert.deepEqual(await page.evaluate(()=>window.__displayRequests),[],'question keeps the reader in fullscreen');
+  assert.equal(await page.evaluate(()=>window.__messages.length),0,'question must not append to or send the native draft');
   assert.equal(await frame.evaluate(()=>window.__contexts.items.length),1,'asking about an attached block does not duplicate it');
   assert.equal(await frame.$('#askInput'),null,'no second composer');
   await frame.click('#contextAsk');
-  assert.equal(await page.evaluate(()=>window.__displayRequests.length),1,'inline mode does not request a redundant change');
-  // A declined transition keeps all attachments and explains where to write.
-  await page.evaluate(()=>{window.__declineDisplay=true;window.__setHostContext({displayMode:'fullscreen'});});
-  await frame.click('#contextAsk');
-  await page.waitForFunction(()=>window.__displayRequests.length===2);
-  await frame.waitForFunction(()=>document.body.textContent.includes('可通过窗口上的显示控件返回对话'));
+  assert.deepEqual(await page.evaluate(()=>window.__displayRequests),[]);
+  await frame.click('#readerMore');await frame.click('#exportContext');
+  await page.waitForFunction(()=>window.__downloads.length===1);
+  const exported=await page.evaluate(()=>window.__downloads[0].contents[0].resource);
+  assert.equal(exported.mimeType,'text/markdown');assert.match(exported.text,/返回原文位置/);
+  assert.ok(exported.text.includes((await frame.evaluate(()=>window.__contexts.items[0].text)).slice(0,12)));
+  assert.doesNotMatch(exported.text,/data:image|base64/);
+  await page.evaluate(()=>{window.__cancelDownload=true;});
+  await frame.click('#readerMore');await frame.click('#exportContext');
+  await frame.waitForFunction(()=>document.body.textContent.includes('保存已取消或被拒绝'));
   assert.equal(await frame.evaluate(()=>window.__contexts.items.length),1);
-  assert.equal(await page.evaluate(()=>window.__messages.length),0);
-  await page.evaluate(()=>{window.__declineDisplay=false;});
   await frame.click('#readerMore');await frame.click('#paperNewDraft');
   await page.waitForFunction(()=>window.__messages.length===1);
   const message=await page.evaluate(()=>window.__messages.at(-1));
@@ -78,6 +81,10 @@ try {
   const fileView=await frame.evaluate(()=>({tabs:[{id:window.__reader.doc.id,title:window.__reader.doc.title}],active:{document:window.__reader.doc}}));
   await page.evaluate(async view=>{window.__callOverrides.file_open=view;await window.__activate({view:'file',file:{name:'test.pdf',resourceUri:'host-resource://test-pdf'}});},fileView);
   await page.waitForFunction(()=>window.__subscriptions.some(s=>s.method==='resources/subscribe'));
+  await page.evaluate(()=>window.__activate({view:'library'}));
+  await frame.waitForFunction(()=>!document.getElementById('home').hidden);
+  await page.evaluate(active=>window.__activate({view:'reader',...active}),fileView);
+  await frame.waitForFunction(()=>document.getElementById('home').hidden);
   const before=await page.evaluate(()=>window.__toolCalls.filter(n=>n==='file_open').length);
   await page.evaluate(()=>window.__resourceUpdated('host-resource://test-pdf'));
   await page.waitForFunction(before=>window.__toolCalls.filter(n=>n==='file_open').length>before,{},before);
@@ -87,5 +94,5 @@ try {
   const invalid=JSON.parse(await frame.evaluate(()=>window.__webTools.reader_go_to_page.execute({page:999999})));
   assert.ok(invalid.error);
   assert.deepEqual(errors,[]);
-  console.log(JSON.stringify({pass:true,checks:['handoff preserves native draft','no second composer','idempotent attachments','fullscreen handoff to inline','declined mode preserves context','new draft carries context','open original','deep link activation','host theme and cursor','safe area','narrow viewport','settings does not retire reader','native setting sync','file entrypoint subscribes','file update reloads','live page tools','context removal sync','invalid page rejected']}));
+  console.log(JSON.stringify({pass:true,checks:['handoff preserves native draft','no second composer','idempotent attachments','fullscreen is preserved','Markdown export','cancelled export preserves context','resume from library','new draft carries context','open original','deep link activation','host theme and cursor','safe area','narrow viewport','settings does not retire reader','native setting sync','file entrypoint subscribes','file update reloads','live page tools','context removal sync','invalid page rejected']}));
 } finally { await browser?.close();server.kill();await rm(root,{recursive:true,force:true}); }

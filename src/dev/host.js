@@ -12,9 +12,10 @@ let currentHostContext = { displayMode: 'fullscreen', availableDisplayModes: ['i
 const bridge = new AppBridge(null, { name: 'codex-zotero preflight host', version: '0.1.0' }, {
   serverTools: {}, serverResources: {}, message: { text: {}, image: {} },
   experimental: { 'openai/modelContext': {}, 'openai/message': {}, 'openai/files': {}, 'openai/resource': {} },
-  updateModelContext: { text: {}, image: {}, structuredContent: {} }, logging: {},
+  downloadFile: {}, updateModelContext: { text: {}, image: {}, structuredContent: {} }, logging: {},
 }, { hostContext: currentHostContext });
 
+window.__appCapabilities = () => bridge.getAppCapabilities();
 window.__callOverrides = {};
 window.__toolCalls = [];
 bridge.oncalltool = async params => {
@@ -28,6 +29,9 @@ bridge.oncalltool = async params => {
 };
 window.__messages = [];
 bridge.onmessage = async (params, extra) => { window.__messages.push({ ...params, _meta: extra._meta }); return {}; };
+window.__downloads = [];
+window.__cancelDownload = false;
+bridge.ondownloadfile = async params => { window.__downloads.push(params); return { isError: window.__cancelDownload }; };
 window.__openedFiles = [];
 bridge.setRequestHandler(z.object({ method: z.literal('openai/files/open'), params: z.object({ path: z.string() }) }), async ({ params }) => {
   window.__openedFiles.push(params.path); return {};

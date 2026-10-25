@@ -16,9 +16,9 @@ function applyAppearance(context) {
 // ~180MB retained after a few passes over one paper (test/memory.mjs). The panel never uses console.debug.
 console.debug = () => {};
 
-export async function connect() {
+export async function connect({ displayModes = ['fullscreen'] } = {}) {
   if (window.parent !== window) {
-    const app = new App({ name: 'codex-zotero', version: '0.1.0' }, { availableDisplayModes: ['inline', 'fullscreen'] }, { autoResize: false });
+    const app = new App({ name: 'codex-zotero', version: '0.1.0' }, { availableDisplayModes: displayModes }, { autoResize: false });
     const extensions = new OpenAIExtensions(app);
     const results = new Set();
     const host = { app, extensions, mode: 'host', initialResult: null,

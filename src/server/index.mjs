@@ -33,8 +33,11 @@ import { registerExtensions } from './extensions.mjs';
 const here = dirname(fileURLToPath(import.meta.url));
 const argv = process.argv.slice(2);
 const option = name => (argv.includes(name) ? argv[argv.indexOf(name) + 1] : undefined);
-const URI = 'ui://codex-zotero/reader-v2.html';
+const URI = 'ui://codex-zotero/reader-v3.html';
 const SETTINGS_URI = 'ui://codex-zotero/settings-v1.html';
+const entryIcon = ['light', 'dark'].map(theme => ({ theme, mimeType: 'image/svg+xml', sizes: ['any'],
+  src: 'data:image/svg+xml,' + encodeURIComponent(`<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 20 20" fill="none" stroke="${theme === 'dark' ? '#f5f5f5' : '#242424'}" stroke-width="1.33"><path d="M10 5C7 3 4 3 2 4v12c3-1 5-1 8 1 3-2 5-2 8-1V4c-2-1-5-1-8 1Zm0 0v12"/></svg>`),
+}));
 let prefsRevision = 0;
 
 const pool = new HelperPool(join(here, 'pdfkit-helper'), Number(process.env.CODEX_ZOTERO_HELPERS) || 4); // 4: zoom gets sharp in ~150ms instead of ~210ms (preflight)
@@ -468,7 +471,7 @@ if (argv.includes('--standalone')) {
   });
   process.on('SIGTERM', shutdown);
 } else {
-  const server = new McpServer({ name: 'codex-zotero', version: '0.1.0' });
+  const server = new McpServer({ name: 'codex-zotero', version: '0.1.0', icons: entryIcon });
   const ok = (data, text = 'ok') => ({ content: [{ type: 'text', text }], structuredContent: data });
   const fail = e => ({ isError: true, content: [{ type: 'text', text: e.message }] });
   registerExtensions(server, { state, searchLibrary, prefsChanged: () => { prefsRevision++; } });
@@ -478,7 +481,7 @@ if (argv.includes('--standalone')) {
       uri: URI, mimeType: RESOURCE_MIME_TYPE, text: await readFile(join(here, 'panel.html'), 'utf8'),
       _meta: {
         ui: { prefersBorder: false },
-        'openai/ui': { availableDisplayModes: ['inline', 'fullscreen'], preferredDisplayMode: 'inline' },
+        'openai/ui': { availableDisplayModes: ['fullscreen'], preferredDisplayMode: 'fullscreen' },
       },
     }],
   }));
@@ -493,8 +496,19 @@ if (argv.includes('--standalone')) {
   }, async () => ok({ view: 'settings' }));
   registerAppTool(server, 'reader_library', {
     title: 'Zotero 文库', description: 'Browse the Zotero library.', inputSchema: {}, annotations: { readOnlyHint: true },
-    _meta: { ui: { resourceUri: URI, visibility: ['app'] }, 'openai/ui': { entrypoints: [{ type: 'global' }] } },
+    _meta: { ui: { resourceUri: URI, visibility: ['app'] }, 'openai/ui': { entrypoints: [{ type: 'global', quickAction: { title: '继续阅读', icons: entryIcon, target: { type: 'tool', name: 'reader_resume', arguments: {} } } }] } },
   }, async () => ok({ view: 'library' }));
+  registerAppTool(server, 'reader_resume', {
+    title: '继续阅读', description: 'Resume the last open paper or note in the reader. Show the library when no tab is open.',
+    inputSchema: {}, annotations: { readOnlyHint: true },
+    _meta: { ui: { resourceUri: URI, visibility: ['app'] } },
+  }, async () => {
+    try {
+      const tabs = await tabsView();
+      const active = tabs.active ? await openedTab(tabs.active) : null;
+      return ok({ ...tabs, view: active ? 'reader' : 'library', active });
+    } catch (e) { return fail(e); }
+  });
   registerAppTool(server, 'reader_file', {
     title: '用 Zotero 阅读器打开 PDF', description: 'Read a PDF authorized by the host file viewer.',
     inputSchema: { file: z.object({ name: z.string().min(1), resourceUri: z.string().min(1) }) },

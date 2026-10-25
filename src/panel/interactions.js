@@ -1,4 +1,5 @@
 import { parseReaderRoute, readerDeepLink } from '../shared/reader-links.mjs';
+import { exportContextMarkdown } from '../shared/context-export.mjs';
 
 export class Interactions {
   constructor({ host, reader, selection, conversation, contexts, openTab, showFile, showHome, notify }) {
@@ -9,6 +10,8 @@ export class Interactions {
       this.menu.hidden = !this.menu.hidden;
       $('readerMore').setAttribute('aria-expanded', String(!this.menu.hidden));
       $('openOriginal').hidden = !host.extensions?.files;
+      $('exportContext').hidden = !host.app?.getHostCapabilities()?.downloadFile;
+      $('exportContext').disabled = !contexts.items.length;
       $('paperNewDraft').hidden = !host.extensions?.message;
     };
     document.addEventListener('click', e => { if (!e.target.closest('#readerMenu, #readerMore')) this.close(); });
@@ -19,6 +22,19 @@ export class Interactions {
       const { path } = await host.call('document_file', { docId: reader.doc.id });
       await host.extensions.files.open(path);
     });
+    $('exportContext').onclick = () => this.run(async () => {
+      if (this.exporting) return;
+      if (!host.app?.getHostCapabilities()?.downloadFile) throw new Error('当前宿主不支持导出文件。');
+      if (!contexts.items.length) throw new Error('请先加入需要导出的上下文。');
+      this.exporting = true;
+      try {
+        const text = exportContextMarkdown(contexts.items);
+        const result = await host.app.downloadFile({ contents: [{ type: 'resource', resource: {
+          uri: 'file:///zotero-context.md', mimeType: 'text/markdown', text,
+        } }] });
+        notify(result?.isError ? '未导出：保存已取消或被拒绝' : '上下文已交给保存窗口');
+      } finally { this.exporting = false; }
+    });
     $('paperNewDraft').onclick = () => this.run(async () => {
       await conversation.draftNewConversation(); notify('已打开新对话草稿，请填写问题后发送');
     });
@@ -27,7 +43,7 @@ export class Interactions {
       buttons.forEach(b => { b.disabled = true; });
       try {
         const shown = await conversation.continueInChat({ addSelection: id === 'ask' });
-        if (shown !== undefined) notify(shown ? '请在 ChatGPT 对话框中输入问题' : '上下文已准备好，请使用 ChatGPT 对话框；可通过窗口上的显示控件返回对话');
+        if (shown) notify('上下文已准备好，请在 ChatGPT 对话框中输入问题');
       } finally { buttons.forEach(b => { b.disabled = false; }); }
     });
     this.registerTools();
@@ -73,7 +89,8 @@ export class Interactions {
         this.unsubscribeUpdates = resources.addUpdateHandler(event => { if (event.params.uri === this.file.resourceUri) this.run(() => this.reloadFile(true)); });
         await resources.subscribe({ uri: data.file.resourceUri }); this.subscribed = data.file.resourceUri;
       }
-    } else if (data?.view === 'library') this.showHome();
+    } else if (data?.view === 'reader' && data.active) this.showFile(data);
+    else if (data?.view === 'library') this.showHome();
   }
   async reloadFile(preservePosition = false) {
     if (preservePosition && this.reader.doc?.id !== this.fileDocId) return;

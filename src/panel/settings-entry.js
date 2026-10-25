@@ -3,7 +3,7 @@ import { Settings } from './settings.js';
 
 // Settings modals must never claim or retire a live reading panel.
 async function main() {
-  const host = await connect();
+  const host = await connect({ displayModes: ['inline', 'fullscreen'] });
   document.body.classList.add('settings-only');
   try {
     let prefs = (await host.call('prefs_get')).prefs;

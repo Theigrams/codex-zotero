@@ -4,7 +4,7 @@
 
 | 能力 | 阅读器中的行为 |
 | --- | --- |
-| Global entrypoint | 侧栏「Zotero 文库」，进入搜索和在读列表 |
+| Global entrypoint | 侧栏「Zotero 文库」，进入搜索和在读列表；快捷操作「继续阅读」恢复最近的论文/笔记，无标签时显示文库 |
 | Thread entrypoint | 对话内打开「Zotero 阅读器」，保留现有 `reader_open` |
 | File entrypoint | PDF 文件可选择本阅读器；只使用宿主传入的已授权路径，不把 opaque resource URI 当路径 |
 | Deep links | 论文菜单复制当前位置链接；打开链接可恢复论文、PDF 页码和区域，支持初次打开及后续激活 |
@@ -16,13 +16,14 @@
 | Open local file | 论文菜单「打开原 PDF」，通过 `files.open` 使用服务端返回的原文件路径 |
 | Resource subscriptions | 文件入口订阅原资源，宿主通知文件更新后重新打开 PDF，指纹变化使旧 OCR 缓存不再复用 |
 | WebMCP | `document.modelContext` 中注册当前视图、跳页、选择/加入版面块、移除上下文操作；没有该 API 的宿主保留服务端工具 |
-| Display modes | 声明 inline/fullscreen，模型调用默认 inline。去提问/回到对话先确认上下文更新，再请求 inline；已内嵌不重复请求，不支持或拒绝切换时保留上下文并提示使用宿主控件 |
+| Display modes | 完整阅读器仅声明 fullscreen，并以 fullscreen 为首选；设置页独立支持 inline/fullscreen。提问先同步上下文，保持阅读器展开 |
+| File download | 论文菜单「导出上下文」通过标准 MCP Apps downloadFile 保存 Markdown，包含已选块、来源和可回到原文的深链接；按宿主能力显示，取消不移除上下文 |
 | Styling | 内联官方扩展样式，应用宿主主题、样式变量、安全区和光标偏好；原 PDF 页面保持原始外观 |
 | Onboarding | manifest 指向打包的 setup skill，说明本地 Zotero、版面环境及可选 MinerU 配置，不自动启动云端识别 |
 
-阅读器不再提供独立的问题输入框、发送按钮或当前对话草稿按钮，避免与用户正在编辑的原生草稿竞争。「加入上下文」保持阅读状态；「去提问」幂等地加入当前选区，等上下文发布完成后返回对话。截图提取或上下文发布失败时不切换页面。问题内容和发送时机始终由原生对话框控制；准备上下文不会被记录为已经提问。
+阅读器不再提供独立的问题输入框、发送按钮或当前对话草稿按钮，避免与用户正在编辑的原生草稿竞争。「加入上下文」保持阅读状态；「去提问」幂等地加入当前选区，等上下文发布完成后提示使用原生对话框。提问保持 fullscreen，不再请求折叠到 inline。问题内容和发送时机始终由原生对话框控制；准备上下文不会被记录为已经提问。
 
-`inline` 指对话内嵌，不能将它称作原生侧边分栏。当前官方协议没有设置对话框停靠位置或强制聚焦输入框的接口，也不提供可用于这里的 `pip`。所有 entrypoint 仍由宿主以 fullscreen 打开；preferredDisplayMode 仅是模型调用时的偏好。插件通过具体的「去提问」动作请求切换，不再增加一组重复的全屏/退出全屏按钮。请求有 3 秒超时，检查返回的实际模式，不会假报切换成功。
+完整阅读器使用 `fullscreen`，资源元数据与 App 初始化能力保持一致；UI resource 更新为 `reader-v3.html`，避免复用旧显示声明。`inline` 指对话内嵌，不能将它称作原生侧边分栏；只在独立设置页保留。当前官方协议没有设置对话框停靠位置或强制聚焦输入框的接口，也不提供可用于这里的 `pip`。所有 entrypoint 仍由宿主以 fullscreen 打开。
 
 原生设置与面板设置共用同一份偏好；活动面板轮询偏好版本，避免打开原生设置后旧界面仍使用过期值。密钥不进入原生 primitive settings 的 schema/values，仅通过 App 专用密码输入界面保存。
 
@@ -35,3 +36,25 @@ PDF 文件入口是只读阅读器，不调用资源写回 API，也不把 Zoter
 验证：`npm test`；`test/extensions-server.mjs --pdf FILE` 检查实际 stdio MCP 入口、settings resource、路径授权和引用资源；`test/extensions-preflight.mjs --pdf FILE` 使用官方 AppBridge 检查草稿、上下文、文件按钮、深链接、主题、安全区、窄面板、设置同步与 WebMCP。测试不会向真实对话发送消息，也不向云端上传论文。
 
 参考：[官方 Extensions 文档](https://developers.openai.com/plugins/build/extensions)、[UI 文档](https://developers.openai.com/plugins/build/chatgpt-ui)、[协议](https://github.com/openai/mcp-extensions/blob/36f8b38df179144b44d157133bbc5f7c6e353ace/docs/spec.md)、[集成模式](https://github.com/openai/mcp-extensions/blob/36f8b38df179144b44d157133bbc5f7c6e353ace/docs/patterns.md)。
+
+
+## SDK 能力复核与未使用项（2026-10-25）
+
+逐项检查官方 TypeScript `app` / `server` exports、`docs/spec.md`、`docs/patterns.md` 和 Bits & Bolts 示例。npm latest 与 GitHub main 仍是 0.2.1；本次没有升级依赖版本。
+
+| 能力 | 当前覆盖 / 后续判断 |
+| --- | --- |
+| 全局入口快捷操作、入口图标 | 本次补齐继续阅读，及浅色/深色书本图标。快捷操作是 SDK/示例已有能力；图标通过 serverInfo 提供（当前 MCP SDK 1 的高层工具注册不传递单工具 icons）。宿主是否展示由其实现决定。延迟收到恢复结果时也会切换到目标标签 |
+| 标准 MCP Apps 文件下载 | 本次补齐显式上下文 Markdown 导出。只导出已选择的摘录，不读取全文、不启动 OCR、不夹带图片 base64 或后台状态 |
+| 表单描述、单选、取消 | 已在 reader_choose 使用。适合候选论文消歧；目前没有需要数值评分/多步骤提交的表单 |
+| 表单缩略图、资源选择、预览 | 尚未使用。可用于多篇论文的封面预览或图表选择；需要先设计按需预览与缓存，避免检索列表触发所有 PDF 渲染 |
+| MRTR 多轮表单 | 尚未使用。当前服务端是 MCP SDK 1 的协议组合；需独立迁移与兼容测试，不能直接复制 SDK 2 示例 |
+| 宿主管理资源的 read/write | 已通过宿主注入路径读取 PDF，订阅更新。write 未启用：当前文件入口是只读阅读器，批注写入 Zotero，不覆盖原 PDF |
+| 原生 openLink | 已用于 DOI/外部链接；没有为研究内容增加额外重定向 |
+| teardown / 生命周期 | 设置关闭、阅读器卸载保存位置、资源退订和 WebMCP 注销已接入 |
+| 增量 toolinput / progress / cancellation | PDF 入口依赖完整工具结果；OCR 是显式后台任务，已有进度/取消机制。没有把长期 OCR 阻塞在工具调用中 |
+| 宿主版本与能力 | 已按 message、modelContext、files、resources、downloadFile 能力降级。尚未增加硬性版本阻断；只判断版本会误伤有标准 MCP Apps 能力的兼容宿主 |
+| 本地启动缓存 | 阅读位置、标签、OCR 缓存已由本地服务持久化。暂未在 localStorage 复制论文数据，避免缓存与真实文库状态分叉 |
+| Chat/Work、聊天框停靠与拖动 | 当前 SDK 无公开控制接口，不能通过自定义字段实现 |
+
+这里把“API 已导出”“插件已实现”“宿主实际展示”分开记录。自动化测试验证协议、菜单与状态流；不把模拟 AppBridge 的结果等同于原生宿主实测。

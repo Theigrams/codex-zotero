@@ -4,6 +4,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { Client } from '@modelcontextprotocol/sdk/client/index.js';
 import { StdioClientTransport } from '@modelcontextprotocol/sdk/client/stdio.js';
+import { OpenAIUiToolMetadataSchema } from '@openai/mcp-extensions';
 import { fakeZotero } from './fake-zotero.mjs';
 const pdf=process.argv[process.argv.indexOf('--pdf')+1];
 if(!process.argv.includes('--pdf'))throw new Error('Pass --pdf FILE');
@@ -18,7 +19,13 @@ try{
  assert.deepEqual(tools.find(t=>t.name==='reader_file')._meta['openai/ui'].entrypoints[0].extensions,['.pdf']);
  const readerUri=tools.find(t=>t.name==='reader_open')._meta.ui.resourceUri;
  const readerResource=(await client.readResource({uri:readerUri})).contents[0];
- assert.deepEqual(readerResource._meta['openai/ui'],{availableDisplayModes:['inline','fullscreen'],preferredDisplayMode:'inline'});
+ assert.deepEqual(readerResource._meta['openai/ui'],{availableDisplayModes:['fullscreen'],preferredDisplayMode:'fullscreen'});
+ for(const tool of tools.filter(t=>t._meta?.['openai/ui'])) OpenAIUiToolMetadataSchema.parse(tool._meta['openai/ui']);
+ assert.deepEqual(client.getServerVersion().icons.map(i=>i.theme),['light','dark']);
+ const quick=tools.find(t=>t.name==='reader_library')._meta['openai/ui'].entrypoints[0].quickAction;
+ assert.equal(quick.target.name,'reader_resume');assert.equal(quick.title,'继续阅读');
+ assert.equal(tools.find(t=>t.name==='reader_resume')._meta.ui.visibility[0],'app');
+ const empty=await client.callTool({name:'reader_resume',arguments:{}});assert.equal(empty.structuredContent.view,'library');
  const settingsUri=tools.find(t=>t.name==='reader_settings')._meta.ui.resourceUri;
  assert.ok((await client.readResource({uri:settingsUri})).contents[0].text.includes('settings-only'));
  const denied=await client.callTool({name:'file_open',arguments:{}});assert.equal(denied.isError,true);
@@ -26,6 +33,8 @@ try{
  assert.ok(!opened.isError,JSON.stringify(opened));
  const doc=opened.structuredContent.active.document;
  assert.ok(doc.id);assert.equal(doc.itemKey,null);
+ const resume=await client.callTool({name:quick.target.name,arguments:quick.target.arguments});
+ assert.equal(resume.structuredContent.view,'reader');assert.equal(resume.structuredContent.active.document.id,doc.id);
  const file=await client.callTool({name:'document_file',arguments:{docId:doc.id}});assert.equal(file.structuredContent.path,pdf);
  await client.callTool({name:'panel_hello',arguments:{instance:'test-main'}});
  await client.callTool({name:'reader_settings',arguments:{}});
@@ -35,5 +44,5 @@ try{
  await client.callTool({name:'reader_open',arguments:{itemKey:'PAPER001'}});
  const reopened=await client.callTool({name:'file_open',arguments:{},_meta:{'openai/resource':{path:pdf}}});
  assert.equal(reopened.structuredContent.active.document.itemKey,'PAPER001','file viewer preserves known Zotero identity');
- console.log(JSON.stringify({pass:true,checks:['default inline reader with fullscreen support','global/thread/PDF entrypoints','settings resource','file access requires host metadata','authorized PDF open','original file path','settings preserves reader','mentions','paper resource','file viewer preserves Zotero identity']}));
+ console.log(JSON.stringify({pass:true,checks:['fullscreen-only reader', 'quick action resumes the last document or opens the library','global/thread/PDF entrypoints','settings resource','file access requires host metadata','authorized PDF open','original file path','settings preserves reader','mentions','paper resource','file viewer preserves Zotero identity']}));
 }finally{await client.close();await transport.close();await zotero.close();await rm(root,{recursive:true,force:true});}

@@ -10,7 +10,7 @@ The user reads papers in the reader panel (tool `reader_open`). Zotero is the on
 ## Knowing what the user means
 
 - The panel keeps a short reading context in this conversation (paper, page, selection). For "this / here / 这段 / 这个公式", use it; call `reader_state` if it is missing or stale.
-- The panel's 去提问 button attaches the selection and returns to the native composer; it does not send a question. Use explicit context attachments when the user sends their question. Do not treat a prepared attachment as a sent message. Formulas and symbols: trust the original image over extracted text.
+- The panel's 去提问 button attaches the selection while keeping the fullscreen reader open; it does not send a question. Use explicit context attachments when the user sends their question. Do not treat a prepared attachment as a sent message. Formulas and symbols: trust the original image over extracted text.
 - A `zotero://paper/KEY` composer mention contains metadata, not the paper body. Read it as a reference and use `reader_open` only when opening that paper is needed. Do not start OCR merely because a paper is mentioned.
 - When a library search is ambiguous and the user needs to choose, `reader_choose` can present a native selection form; unsupported hosts return candidates instead. Respect cancellation.
 - When available, the live app tools `reader_view`, `reader_go_to_page`, `reader_select_block` and `reader_remove_context` operate on the current panel. Use them for requested page/selection/context actions; otherwise use the server tools. Adding a block is explicit context selection, not sending a message.

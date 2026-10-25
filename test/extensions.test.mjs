@@ -12,6 +12,7 @@ import { readerDeepLink, readerRoute, parseReaderRoute } from '../src/shared/rea
 import { z } from 'zod';
 import { Conversation } from '../src/panel/conversation.js';
 import { ContextBlocks } from '../src/panel/contexts.js';
+import { exportContextMarkdown } from '../src/shared/context-export.mjs';
 
 test('reader links round-trip locations and reject unrelated or malformed routes', () => {
   const location = { itemKey: 'PAPER001', page: 2, rect: [10,20,30,40] };
@@ -59,40 +60,30 @@ function testConversation(overrides = {}) {
   return { conversation, host };
 }
 
-test('chat handoff flushes context before returning to chat without touching a draft', async () => {
+test('preparing a question publishes context without changing fullscreen or the native draft', async () => {
   const events = [];
   const { conversation } = testConversation({ app: {
     getHostCapabilities:()=>({}), getHostContext:()=>({displayMode:'fullscreen',availableDisplayModes:['inline','fullscreen']}),
     updateModelContext:async()=>{events.push('context');},
-    requestDisplayMode:async({mode})=>{events.push(mode);return {mode};},
+    requestDisplayMode:async()=>assert.fail('must keep fullscreen'),
     sendMessage:async()=>assert.fail('must not send or edit a draft'),
   }});
   conversation.contextBlocks = { items:[], add:async()=>{events.push('attach');return true;} };
   assert.equal(await conversation.continueInChat({addSelection:true}),true);
-  assert.deepEqual(events,['attach','context','inline']);
+  assert.deepEqual(events,['attach','context']);
   assert.equal(conversation.handingOff,false);
   delete globalThis.window;
 });
 
-test('handoff keeps context on declined display changes, and does not navigate after failed attachments', async () => {
-  let moves=0;
-  const { conversation,host } = testConversation({app:{getHostCapabilities:()=>({}),getHostContext:()=>({displayMode:'fullscreen'}),updateModelContext:async()=>({}),
-    requestDisplayMode:async()=>{moves++;return {mode:'fullscreen'};}}});
+test('failed attachment does not prepare an incomplete question', async () => {
+  const { conversation } = testConversation({app:{getHostCapabilities:()=>({}),updateModelContext:async()=>assert.fail('attachment was not prepared')}});
   conversation.contextBlocks={items:[],add:async()=>undefined};
   assert.equal(await conversation.continueInChat({addSelection:true}),undefined);
-  assert.equal(moves,0);
-  assert.equal(await conversation.continueInChat(),false);
-  host.app.requestDisplayMode=async()=>{throw new Error('unsupported');};
-  assert.equal(await conversation.continueInChat(),false);
-  host.app.getHostContext=()=>({displayMode:'fullscreen',availableDisplayModes:['fullscreen']});
-  host.app.requestDisplayMode=async()=>assert.fail('mode not offered');
-  assert.equal(await conversation.continueInChat(),false);
-  host.app.getHostContext=()=>({displayMode:'inline'});
-  assert.equal(await conversation.continueInChat(),true);
+  assert.equal(conversation.handingOff,false);
   delete globalThis.window;
 });
 
-test('failed context sync prevents navigation and handoff can be retried', async () => {
+test('failed context sync is surfaced and preparing the question can be retried', async () => {
   const { conversation,host }=testConversation({app:{getHostCapabilities:()=>({}),updateModelContext:async()=>{throw new Error('sync failed');},requestDisplayMode:async()=>assert.fail('context was not published')}});
   await assert.rejects(()=>conversation.continueInChat(),/sync failed/);
   assert.equal(conversation.handingOff,false);
@@ -142,4 +133,12 @@ test('official settings and mentions helpers interoperate with MCP SDK 1, persis
     const tools = await client.listTools();
     assert.deepEqual(tools.tools.find(t => t.name === 'search_mentions')._meta.ui.visibility, ['app']);
   } finally { await client.close(); await server.close(); await rm(root, { recursive:true, force:true }); }
+});
+
+test('context export keeps selected text and source locations without thumbnails or hidden full text', () => {
+  const text=exportContextMarkdown([{id:'block',contextNumber:3,title:'Paper <title>',docId:'a'.repeat(16),page:2,type:'formula',rect:[1,2,3,4],text:'E = mc²\n<script>no</script>',source:'ocr',image:'SECRET_IMAGE'}]);
+  assert.match(text,/上下文 3/);assert.match(text,/第 2 页/);assert.match(text,/MinerU OCR/);
+  assert.match(text,/> E = mc²/);assert.match(text,/&lt;script&gt;/);assert.doesNotMatch(text,/SECRET_IMAGE|<script>/);
+  const link=text.match(/\[返回原文位置\]\(([^)]+)\)/)[1];
+  assert.deepEqual(parseReaderRoute(new URL(link).searchParams.get('path')),{docId:'a'.repeat(16),page:2,rect:[1,2,3,4]});
 });

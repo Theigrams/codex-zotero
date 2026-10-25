@@ -121,7 +121,7 @@ export class Conversation {
     return this.publish('[Zotero 阅读器] 这个面板已被新打开的阅读器面板取代；以较新的阅读器上下文为准。', { document: null, view: 'retired' }).catch(() => {});
   }
 
-  // One composer: publish attachments, then let the host show the conversation.
+  // One composer: publish attachments and keep the complete reader expanded.
   // Never append a prompt to (or submit) a draft the user may already be editing.
   async continueInChat({ addSelection = false } = {}) {
     if (this.handingOff) return;
@@ -130,13 +130,9 @@ export class Conversation {
       if (addSelection && !await this.contextBlocks?.add()) return;
       await this.sync();
       await this.publishQueue;
-      const app = this.host.app, context = app?.getHostContext?.();
-      if (context?.displayMode === 'inline') return true;
-      if (!app?.requestDisplayMode || (context?.availableDisplayModes && !context.availableDisplayModes.includes('inline'))) return false;
-      try {
-        const result = await app.requestDisplayMode({ mode: 'inline' }, { timeout: 3000 });
-        return result?.mode === 'inline';
-      } catch { return false; } // Attachments remain usable even if the host declines the mode change.
+      // The complete reader stays expanded. The host owns the native composer;
+      // preparing context must not collapse the reader or modify its draft.
+      return true;
     } finally { this.handingOff = false; }
   }
 
