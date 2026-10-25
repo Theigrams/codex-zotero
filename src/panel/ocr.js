@@ -6,7 +6,6 @@ export class OcrPanel {
     $('ocrDocument').onclick = () => this.start();
     $('ocrCancel').onclick = async () => { try { await this.call('ocr_job_cancel', { docId:this.reader.doc.id }); this.refresh(); } catch(e) { this.onError(e.message); } };
     $('ocrClose').onclick = () => this.close();
-    $('ocrContextMode').onchange = () => this.settings({ contextMode: $('ocrContextMode').value });
     $('ocrAllowModel').onchange = () => this.settings({ allowModelOcr: $('ocrAllowModel').checked });
   }
   open() { if (!this.reader.doc) return; $('ocrPanel').hidden = false; this.refresh(); }
@@ -14,7 +13,7 @@ export class OcrPanel {
   reset() { this.generation++; clearTimeout(this.timer); this.close(); this.lastVersion = null; this.lastDone = null; this.status = null; }
   async settings(patch) {
     const doc = this.reader.doc; if (!doc) return;
-    $('ocrContextMode').disabled = true; $('ocrAllowModel').disabled = true;
+    $('ocrAllowModel').disabled = true;
     try { await this.call('ocr_settings', { docId: doc.id, ...patch }); }
     catch (e) { this.onError(e.message); }
     finally { this.refresh(); }
@@ -36,7 +35,7 @@ export class OcrPanel {
       if (generation !== this.generation || this.reader.doc?.id !== doc.id || request !== this.request) return;
       if (typeof r.complete !== 'boolean') {
         $('ocrStatus').textContent = '插件已更新，请重启 Codex 以启用全文功能。';
-        $('ocrDocument').disabled = true; $('ocrContextMode').disabled = true; $('ocrAllowModel').disabled = true;
+        $('ocrDocument').disabled = true; $('ocrAllowModel').disabled = true;
         return;
       }
       this.status = r;
@@ -46,11 +45,8 @@ export class OcrPanel {
       $('ocrDocument').disabled = !r.configured || !!busy || this.starting;
       $('ocrCancel').hidden = !busy || job.state === 'committing';
       $('ocrCached').textContent = r.complete ? `已自动使用 MinerU 全文和版面 · ${doc.pageCount} 页` : r.pages.length ? `旧版缓存仅含 ${r.pages.length} 页；识别整篇后统一使用完整结果。` : '识别前使用本机提取的文字和版面。';
-      $('ocrContextMode').disabled = false; $('ocrAllowModel').disabled = false;
-      $('ocrContextMode').value = r.settings.contextMode; $('ocrAllowModel').checked = r.settings.allowModelOcr;
-      $('ocrContextHint').textContent = r.settings.contextMode === 'first-question'
-        ? '有完整结果时，请模型在本对话首次相关提问时读取一次，后续复用；此设置不会启动识别。'
-        : '有完整结果时，模型按问题需要读取；连续对话复用已读版本。';
+      $('ocrAllowModel').disabled = false;
+      $('ocrAllowModel').checked = r.settings.allowModelOcr;
       $('ocrConfig').hidden = r.configured;
       $('ocrBadge').textContent = busy ? '识别中' : r.complete ? '全文' : 'OCR';
       this.onStatus?.(doc.id, r);

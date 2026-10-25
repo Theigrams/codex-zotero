@@ -379,7 +379,7 @@ export function modelTools(ctx) {
       async run({ docId }) { const data = await ctx.analysis.status(await ctx.activeDoc(docId)); return { data, text: JSON.stringify(data) }; },
     },
     ocr_start: {
-      description: 'Start whole-document MinerU OCR in the background. Reuses an existing complete result or active job; never re-uploads those. With userRequested=false, allowed only when the user enabled allowModelOcr for this paper. Set userRequested=true only for an explicit user request to recognize/upload this paper. Use ocr_status for progress, paper_full_text after completion. Do not start OCR merely to satisfy first-question context mode.',
+      description: 'Start whole-document MinerU OCR in the background. Reuses an existing complete result or active job; never re-uploads those. With userRequested=false, allowed only when the user enabled allowModelOcr for this paper. Set userRequested=true only for an explicit user request to recognize/upload this paper. Use ocr_status for progress, paper_full_text after completion. Do not start OCR merely because the paper was opened.',
       schema: { ...docArg, userRequested: z.boolean().default(false).describe('True only for an explicit request from the user to OCR this paper.') },
       async run({ docId, userRequested = false }) {
         const doc = await ctx.activeDoc(docId);
@@ -393,7 +393,7 @@ export function modelTools(ctx) {
       },
     },
     paper_full_text: {
-      description: 'Read cached complete MinerU full text into this conversation, with original PDF page numbers. Never starts OCR. Read a document/version only once per conversation; reuse that tool result on later turns. If this version is ALREADY fully present in your current conversation, skip the call or pass knownVersion to return metadata only. For long papers follow nextOffset with the returned version until null; only then is that version fully read. No cross-conversation deduplication. After context loss, omit knownVersion to retrieve again. If unavailable use read_pages or explicitly permitted ocr_start.',
+      description: 'Read cached complete MinerU full text into this conversation, with original PDF page numbers. Never starts OCR. Fetch only when the current question needs full-paper context; otherwise use the selection or relevant pages. Read a document/version only once per conversation; reuse that tool result on later turns. If this version is ALREADY fully present in your current conversation, skip the call or pass knownVersion to return metadata only. For long papers follow nextOffset with the returned version until null; only then is that version fully read. No cross-conversation deduplication. After context loss, omit knownVersion to retrieve again. If unavailable use read_pages or explicitly permitted ocr_start.',
       schema: { ...docArg, knownVersion: z.string().optional().describe('Version already fully read in THIS conversation; suppresses duplicate body.'), version: z.string().optional().describe('Expected version for pagination; stops mixing revisions.'), offset: z.number().int().min(0).default(0), maxChars: z.number().int().min(1).max(60000).default(40000) },
       async run({ docId, ...options }) {
         const { text, ...data } = await ctx.analysis.fullText(await ctx.activeDoc(docId), options);

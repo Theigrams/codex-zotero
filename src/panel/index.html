@@ -283,7 +283,7 @@
   #ocrPanel header { display:flex; align-items:center; justify-content:space-between; font-weight:600; }
   #ocrPanel p { color:var(--muted); font-size:12px; margin:10px 0; }
   #ocrPanel .ocr-actions { display:flex; gap:6px; flex-wrap:wrap; }
-  #ocrPanel button:not(#ocrClose), #ocrContextMode { padding:5px 8px; border:1px solid var(--line); border-radius:4px; background:var(--bg); color:var(--text); font:inherit; }
+  #ocrPanel button:not(#ocrClose) { padding:5px 8px; border:1px solid var(--line); border-radius:4px; background:var(--bg); color:var(--text); font:inherit; }
   #ocrPanel button:disabled { opacity:.5; cursor:default; }
   #ocrPanel label { display:flex; justify-content:space-between; align-items:center; gap:8px; margin-top:12px; }
   #ocrStatus { display:block; margin-top:12px; font-size:12px; }
@@ -381,8 +381,7 @@
   <span id="ocrStatus" role="status" aria-live="polite"></span>
   <p id="ocrConfig" hidden>尚未配置 MinerU，请先完成插件的识别服务设置。</p>
   <p id="ocrCached"></p>
-  <label for="ocrContextMode">全文上下文<select id="ocrContextMode"><option value="on-demand">模型按需读取</option><option value="first-question">首次提问读取</option></select></label>
-  <p id="ocrContextHint">有完整结果时，模型按问题需要读取；连续对话复用已读版本。</p>
+  <p>模型会在需要时读取全文，并复用当前对话中已读的内容。</p>
   <label for="ocrAllowModel">允许模型按需识别<input id="ocrAllowModel" type="checkbox"></label>
   <p>仅对此论文生效。开启后，模型可将整篇上传至 MinerU；打开论文不会自动上传。</p>
 </section>

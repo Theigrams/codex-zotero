@@ -33,15 +33,16 @@ export class DocumentAnalysis {
     this.facts.set(record, value); return value;
   }
   async settings(doc) {
-    return { contextMode: 'on-demand', allowModelOcr: false, ...await jsonFile(join(doc.cacheDir, 'analysis-settings.json'), {}) };
+    const saved = await jsonFile(join(doc.cacheDir, 'analysis-settings.json'), {});
+    // Ignore retired reading-mode settings, including first-question in existing installs.
+    return { allowModelOcr: saved.allowModelOcr === true };
   }
   async setSettings(doc, patch) {
-    if (patch.contextMode !== undefined && !['on-demand', 'first-question'].includes(patch.contextMode)) throw new Error('未知的全文上下文设置。');
     if (patch.allowModelOcr !== undefined && typeof patch.allowModelOcr !== 'boolean') throw new Error('识别设置无效。');
     // Serialize independent controls without racing a concurrent preference write.
     const run = (this.settingsQueue || Promise.resolve()).then(async () => {
       const next = await this.settings(doc);
-      for (const key of ['contextMode', 'allowModelOcr']) if (patch[key] !== undefined) next[key] = patch[key];
+      for (const key of ['allowModelOcr']) if (patch[key] !== undefined) next[key] = patch[key];
       await atomicJSON(join(doc.cacheDir, 'analysis-settings.json'), next);
       return this.status(doc);
     });

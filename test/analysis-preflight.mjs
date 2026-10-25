@@ -46,9 +46,7 @@ try {
  assert.equal((await model('ocr_start')).data.blocked,true);assert.equal(submits,0);
  await frame.click('#ocrButton');await frame.waitForFunction(()=>!document.getElementById('ocrDocument').disabled);
  assert.equal(await frame.$('#ocrPage'),null);assert.equal(await frame.$('#ocrSource'),null);
- await frame.select('#ocrContextMode','first-question');
- await host.waitForFunction(()=>window.__modelContexts.at(-1)?.structuredContent?.fullText?.contextMode==='first-question');
- assert.equal((await model('ocr_start')).data.blocked,true,'context choice does not authorize uploads');
+ assert.equal(await frame.$('#ocrContextMode'),null,'reading mode selector removed');
  await frame.click('#ocrDocument');
  await frame.waitForFunction(()=>document.getElementById('ocrStatus').textContent.includes('正在下载识别结果'),{timeout:10000});
  assert.equal(await frame.$eval('#ocrDocument',el=>el.disabled),true,'download still counts as busy');
@@ -75,5 +73,5 @@ try {
  // A narrow panel still exposes the controls and keeps context text in its own scroller.
  await host.setViewport({width:420,height:740});
  assert.equal(await frame.evaluate(()=>document.documentElement.scrollWidth<=window.innerWidth),true);
- console.log(JSON.stringify({pass:true,layout:result,checks:['no automatic cloud request','local model','block context thumbnail/group','host removal synchronization','download completion waits for usable local results','single-page/source controls removed','whole-document atomic source','compact first-question policy','full text retrieval and version deduplication','per-paper model OCR permission','layout toggle','narrow panel'],cloudRequests:submits}));
+ console.log(JSON.stringify({pass:true,layout:result,checks:['no automatic cloud request','local model','block context thumbnail/group','host removal synchronization','download completion waits for usable local results','single-page/source controls removed','whole-document atomic source','compact on-demand policy','full text retrieval and version deduplication','per-paper model OCR permission','layout toggle','narrow panel'],cloudRequests:submits}));
 }finally{await browser?.close();server.kill();await new Promise(r=>cloud.close(r));await rm(root,{recursive:true,force:true});}

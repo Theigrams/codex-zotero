@@ -331,7 +331,7 @@ const appSchemas = {
   ocr_job_status: { docId: z.string() },
   ocr_job_start: { docId: z.string(), force: z.boolean().optional() },
   ocr_job_cancel: { docId: z.string() },
-  ocr_settings: { docId: z.string(), contextMode: z.enum(['on-demand', 'first-question']).optional(), allowModelOcr: z.boolean().optional() },
+  ocr_settings: { docId: z.string(), allowModelOcr: z.boolean().optional() },
   panel_hello: { instance: z.string().max(40) },
   panel_poll: { instance: z.string().max(40), seen: z.number().int().min(0).optional() },
   tab_open: { docId: z.string().optional(), itemKey: z.string().regex(/^[A-Z0-9]{8}$/).optional() },

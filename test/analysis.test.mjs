@@ -204,7 +204,8 @@ test('model OCR honors per-paper permission; reading full text never starts clou
  try{
   const blocked=await tools.ocr_start.run({});assert.equal(blocked.data.blocked,true);assert.equal(uploads,0);
   assert.equal((await tools.paper_full_text.run({})).data.status,'unavailable');assert.equal(uploads,0);
-  await analysis.setSettings(doc,{contextMode:'first-question'});
+  await writeFile(join(root,'analysis-settings.json'),JSON.stringify({contextMode:'first-question',allowModelOcr:false}));
+  assert.equal((await analysis.settings(doc)).contextMode,undefined,'legacy mode ignored');
   assert.equal((await tools.ocr_start.run({})).data.blocked,true,'reading preference is not upload permission');
   await analysis.setSettings(doc,{allowModelOcr:true});
   await Promise.all([tools.ocr_start.run({}),tools.ocr_start.run({})]);await analysis.jobs.get(doc.id).promise;
@@ -218,7 +219,7 @@ test('background context contains a version and retrieval policy, never repeats 
  const {fullTextDescriptor,fullTextContext}=await import('../src/shared/full-text.mjs');
  const status={complete:true,version:'v1',characters:120000,pages:[1,2],body:'DO NOT INJECT BODY',settings:{contextMode:'first-question',allowModelOcr:false}};
  const descriptor=fullTextDescriptor(status), context=fullTextContext('doc',descriptor);
- assert.match(context,/paper_full_text/);assert.match(context,/首次/);assert.doesNotMatch(context,/DO NOT INJECT BODY/);
+ assert.match(context,/paper_full_text/);assert.match(context,/按当前问题/);assert.doesNotMatch(context,/首次/);assert.equal(descriptor.contextMode,undefined);assert.doesNotMatch(context,/DO NOT INJECT BODY/);
  assert.equal(descriptor.body,undefined);assert.equal(descriptor.pages,undefined);assert.ok(context.length<600);
  assert.doesNotMatch(fullTextContext('doc',{...descriptor,contextMode:'on-demand'}),/首次提问/);
 });
