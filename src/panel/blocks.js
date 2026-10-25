@@ -39,10 +39,13 @@ export class Blocks {
   outline(block, page) {
     this.hoverNode?.remove(); this.hoverNode = null;
     if (!block || this.selection.drag) return;
+    const selected = this.selection.current;
+    if (selected?.page === page && selected.kind === 'region'
+      && selected.rect.every((v, i) => Math.abs(v - block.rect[i]) < 1)) return;
     const pg = this.reader.pages.get(page);
     if (!pg) return;
     const [rx, ry, rw, rh] = this.reader.region(page-1), [x,y,w,h] = block.rect;
-    const n = document.createElement('div'); n.className = 'block-outline';
+    const n = document.createElement('div'); n.className = 'block-outline'; n.dataset.blockType = block.type;
     Object.assign(n.style, { left: `${(x-rx)/rw*100}%`, top: `${(y-ry)/rh*100}%`, width: `${w/rw*100}%`, height: `${h/rh*100}%` });
     const tag = document.createElement('span'); tag.textContent = BLOCK_NAMES[block.type] || '段落'; n.append(tag);
     pg.overlay.append(n); this.hoverNode = n;
@@ -50,6 +53,7 @@ export class Blocks {
   select(page, point, event) {
     const block = this.hit(page, point);
     if (!block) return false;
+    this.outline(null);
     this.selection.set({ kind: 'region', page, rect: block.rect, text: block.text,
       block: { id: block.id, type: block.type, textSource: block.textSource || 'original' } });
     if (event?.shiftKey) this.onAdd();

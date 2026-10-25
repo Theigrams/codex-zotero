@@ -33,17 +33,79 @@ try {
  assert.equal(result.engine,'pp-doclayout-v2');assert.ok(result.blocks>0);
  // Select an actual detected block, then add it through the user control.
  await frame.evaluate(()=>{const b=[...window.__blocks.pages.values()][0].blocks.find(x=>x.type==='text')||[...window.__blocks.pages.values()][0].blocks[0];window.__blocks.select(1,[b.rect[0]+b.rect[2]/2,b.rect[1]+b.rect[3]/2]);});
+ const selectedStyle=await frame.$eval('.region',n=>({border:getComputedStyle(n).borderTopStyle,fill:getComputedStyle(n).backgroundColor}));
+ assert.equal(selectedStyle.border,'solid');assert.equal(selectedStyle.fill,'rgba(0, 0, 0, 0)');
  await frame.click('#addContext');
  await host.waitForFunction(()=>window.__modelContexts?.at(-1)?.structuredContent?.contextBlocks?.length===1,{timeout:5000});
  const context=await host.evaluate(()=>window.__modelContexts.at(-1));
  assert.equal(context.content[1]._meta['openai/group'].title,context.structuredContent.document.title);
  assert.ok(context.content[1]._meta['openai/thumbnail'].src.startsWith('data:image/png;base64,'));
  assert.deepEqual(context.content[0].annotations.audience,['assistant']);
+ assert.ok(context.content[1]._meta['openai/title'].startsWith('上下文 1 ·'));
+ await frame.waitForSelector('.context-pin');
+ assert.equal(await frame.$eval('.context-pin',n=>n.textContent),'1');
+ const overlaps=await frame.$eval('.context-pin',n=>{const p=n.getBoundingClientRect(),b=n.parentElement.getBoundingClientRect();return Math.max(0,Math.min(p.right,b.right)-Math.max(p.left,b.left))*Math.max(0,Math.min(p.bottom,b.bottom)-Math.max(p.top,b.top));});
+ assert.equal(overlaps,0,'badge must not cover the selected block text');
+ await frame.evaluate(()=>window.__selection.clear());
+ assert.equal(await frame.$eval('.context-mark',n=>getComputedStyle(n).borderTopStyle),'dashed');
+ await frame.click('.context-jump');
+ await frame.waitForFunction(()=>window.__selection.current?.kind==='region');
+ assert.equal(await frame.$eval('.region',n=>getComputedStyle(n).borderTopStyle),'solid');
+ await frame.click('.context-pin');
+ await frame.waitForFunction(()=>document.activeElement?.classList.contains('context-jump'));
+ assert.equal(await frame.$eval('#contextList li',n=>n.classList.contains('is-linked')),true);
+ // Saved block annotations tint the whole rectangle; selecting it adds no tint.
+ const fills=await frame.evaluate(()=>{
+   const item=window.__contexts.items[0], layer=window.__annotations;
+   layer.apply({items:[{key:'test-block',type:'image',color:'#ffd400',page:1,rects:[item.rect],tags:[]}],rev:'test'});
+   const fill=getComputedStyle(document.querySelector('.ann.img')).backgroundColor;
+   const selection=getComputedStyle(document.querySelector('.region')).backgroundColor;
+   layer.apply({items:[],rev:'clean'});return {fill,selection};
+ });
+ assert.equal(fills.fill,'rgb(255, 212, 0)');assert.equal(fills.selection,'rgba(0, 0, 0, 0)');
+ // Real hover rendering for every semantic type uses a distinct dashed, unfilled frame.
+ const colors=await frame.evaluate(()=>{
+   const b=window.__contexts.items[0];window.__selection.clear();
+   const results=['text','formula','figure','table'].map(type=>{
+     window.__blocks.outline({...b,type},1);
+     const style=getComputedStyle(document.querySelector('.block-outline'));
+     return {color:style.borderTopColor,border:style.borderTopStyle,fill:style.backgroundColor};
+   });window.__blocks.outline(null);return results;
+ });
+ assert.equal(new Set(colors.map(x=>x.color)).size,4);for(const style of colors){assert.equal(style.border,'dashed');assert.equal(style.fill,'rgba(0, 0, 0, 0)');}
+ await frame.click('.context-jump');
+ // Cropping/zoom remount pages: the persistent context marker must be reconstructed in PDF coordinates.
+ await frame.evaluate(()=>{window.__reader.zoomBy(1.2);if(window.__reader.crop)window.__reader.toggleCrop();});
+ await frame.waitForSelector('.context-mark');
+ const coordinates=await frame.evaluate(()=>{
+   const item=window.__contexts.items[0],n=document.querySelector('.context-mark');
+   const [x,y,w,h]=window.__reader.region(item.page-1);
+   return {actual:parseFloat(n.style.left),expected:(item.rect[0]-x)/w*100};
+ });
+ assert.ok(Math.abs(coordinates.actual-coordinates.expected)<0.001);
+ await frame.evaluate(()=>{const item=window.__contexts.items[0];window.__reader.fitWidth();window.__reader.scrollToPoint(item.page,item.rect[1]);window.__reader.refresh();});
+ await frame.waitForFunction(()=>!window.__reader.pendingSharp&&document.querySelector('.context-pin')?.getBoundingClientRect().height>0);
+
  if(process.argv.includes('--screenshot')) await host.screenshot({path:process.argv[process.argv.indexOf('--screenshot')+1]});
+ // Removing one attachment must not renumber another attachment already shown in chat.
+ await frame.evaluate(async()=>{
+   const b=[...window.__blocks.pages.values()].filter(Boolean).flatMap(p=>p.blocks).find(b=>Math.abs(b.rect[1]-window.__contexts.items[0].rect[1])>1);
+   window.__selection.set({kind:'region',page:1,rect:b.rect,text:b.text,block:{type:b.type}});
+   await window.__contexts.add();
+ });
+ await host.waitForFunction(()=>window.__modelContexts.at(-1)?.structuredContent?.contextBlocks?.length===2);
+ await frame.click('#contextList button[data-action="remove"]');
+ await host.waitForFunction(()=>window.__modelContexts.at(-1)?.structuredContent?.contextBlocks?.length===1);
+ assert.equal(await frame.evaluate(()=>window.__contexts.items[0].contextNumber),2);
+ assert.ok((await host.evaluate(()=>window.__modelContexts.at(-1).content[1]._meta['openai/title'])).startsWith('上下文 2 ·'));
+ assert.equal(await frame.$$eval('.context-pin',nodes=>nodes.map(n=>n.textContent).join()),'2');
  await host.evaluate(()=>window.__clearModelContext());await frame.waitForFunction(()=>window.__contexts.items.length===0);
+ assert.equal(await frame.$('.context-mark'),null,'host removal clears the page marker');
  pageCount=await frame.evaluate(()=>window.__reader.doc.pageCount);
  const model=async(name,args={})=>(await fetch(url.replace('/panel','/api/model'),{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({name,arguments:args})})).json();
  assert.equal((await model('ocr_start')).data.blocked,true);assert.equal(submits,0);
+ await frame.evaluate(()=>{document.getElementById('scroller').scrollTop=0;});
+ await frame.waitForFunction(()=>!document.getElementById('bar').classList.contains('hidden'));
  await frame.click('#ocrButton');await frame.waitForFunction(()=>!document.getElementById('ocrDocument').disabled);
  assert.equal(await frame.$('#ocrPage'),null);assert.equal(await frame.$('#ocrSource'),null);
  assert.equal(await frame.$('#ocrContextMode'),null,'reading mode selector removed');
@@ -67,11 +129,11 @@ try {
  await frame.click('#ocrAllowModel');await frame.waitForFunction(()=>window.__ocr.status.settings.allowModelOcr===true);
  await frame.click('#ocrDocument');await frame.waitForFunction(()=>!document.getElementById('ocrDocument').disabled,{timeout:15000});
  assert.equal(submits,2,'only explicit re-recognition forces another job');
- if(process.argv.includes('--screenshot')) await host.screenshot({path:process.argv[process.argv.indexOf('--screenshot')+1]});
+ if(process.argv.includes('--screenshot')) await host.screenshot({path:process.argv[process.argv.indexOf('--screenshot')+1].replace('.png','-ocr.png')});
  await frame.click('#ocrClose');await frame.click('#layoutButton');await frame.waitForFunction(()=>document.getElementById('layoutButton').getAttribute('aria-pressed')==='false');
  await frame.click('#layoutButton');await frame.waitForFunction(()=>document.getElementById('layoutButton').getAttribute('aria-pressed')==='true');
  // A narrow panel still exposes the controls and keeps context text in its own scroller.
  await host.setViewport({width:420,height:740});
  assert.equal(await frame.evaluate(()=>document.documentElement.scrollWidth<=window.innerWidth),true);
- console.log(JSON.stringify({pass:true,layout:result,checks:['no automatic cloud request','local model','block context thumbnail/group','host removal synchronization','download completion waits for usable local results','single-page/source controls removed','whole-document atomic source','compact on-demand policy','full text retrieval and version deduplication','per-paper model OCR permission','layout toggle','narrow panel'],cloudRequests:submits}));
+ console.log(JSON.stringify({pass:true,layout:result,checks:['no automatic cloud request','local model','block context thumbnail/group','host removal synchronization','unfilled solid selection and typed dashed hover','saved block tint','numbered page/tray linking','marker survives crop and zoom','download completion waits for usable local results','single-page/source controls removed','whole-document atomic source','compact on-demand policy','full text retrieval and version deduplication','per-paper model OCR permission','layout toggle','narrow panel'],cloudRequests:submits}));
 }finally{await browser?.close();server.kill();await new Promise(r=>cloud.close(r));await rm(root,{recursive:true,force:true});}

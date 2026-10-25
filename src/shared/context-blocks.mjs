@@ -1,10 +1,11 @@
 // Context is explicit and bounded; page movement only updates the invisible reading-position block.
 export const BLOCK_NAMES = { text: '段落', title: '标题', caption: '图注', formula: '公式', table: '表格', figure: '图片', region: '选区' };
 export const MAX_CONTEXT_BLOCKS = 8;
+export const contextTitle = block => `${block.contextNumber ? `上下文 ${block.contextNumber} · ` : ''}第 ${block.page} 页 · ${BLOCK_NAMES[block.type] || '选段'}`;
 export function contextContent(background, blocks, { extended = false, images = false } = {}) {
   const content = [{ type: 'text', text: background, annotations: { audience: ['assistant'] } }];
   for (const block of blocks) {
-    const title = `第 ${block.page} 页 · ${BLOCK_NAMES[block.type] || '选段'}`;
+    const title = contextTitle(block);
     const meta = extended ? {
       'openai/title': title, 'openai/group': { title: block.title },
       'zotero/blockId': block.id,

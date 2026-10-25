@@ -43,7 +43,7 @@ export class Selection {
 
   down(e) {
     const el = e.target.closest?.('.page');
-    if (e.button !== 0 || !el || !this.reader.doc) return;
+    if (e.button !== 0 || !el || !this.reader.doc || e.target.closest('button')) return;
     e.preventDefault(); // no native image drag or text selection
     const k = Number(el.dataset.page);
     const pt = this.pointAt(e, el, k);
@@ -139,6 +139,7 @@ export class Selection {
     const place = (cls, [x, y, w, h]) => {
       const n = document.createElement('div');
       n.className = cls;
+      if (cls === 'region') n.dataset.blockType = s.block?.type || 'region';
       Object.assign(n.style, { left: `${((x - rx) / rw) * 100}%`, top: `${((y - ry) / rh) * 100}%`, width: `${(w / rw) * 100}%`, height: `${(h / rh) * 100}%` });
       pg.overlay.appendChild(n);
     };

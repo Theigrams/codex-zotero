@@ -439,7 +439,7 @@ function onSelection(sel, final) {
   if (!sel) closeAsk();
   else popup.close();
   placeToolbar();
-  if (final) conversation.schedule();
+  if (final) { blocks?.outline(null); contexts?.selectionChanged(); conversation.schedule(); }
 }
 
 // Above the selection when there is room under the bar, otherwise below it; hidden when off screen.
@@ -734,6 +734,7 @@ async function main() {
       annotations?.draw(k);
       find?.draw(k);
       selection?.draw(k);
+      contexts?.draw(k);
     },
     onImageError: reason => showMessage(`页面图片无法显示：${reason}`, true),
     onIdle: position => {
@@ -742,6 +743,7 @@ async function main() {
       selection.prefetch(range(...reader.range(0)));
       links.prefetch(range(...reader.range(0)));
       blocks?.prefetch(range(...reader.range(0)));
+      contexts?.relayout();
       host.call('position_save', { docId: doc.id, ...position }).catch(() => {});
     },
   });
@@ -773,7 +775,12 @@ async function main() {
     $('analysisNotice').textContent = message; $('analysisNotice').hidden = false;
     clearTimeout(analysisNotice.timer); analysisNotice.timer = setTimeout(() => { $('analysisNotice').hidden = true; }, 5000);
   };
-  contexts = new ContextBlocks({ host, reader, selection, onChange: () => conversation.schedule(), onNote: analysisNotice });
+  contexts = new ContextBlocks({ host, reader, selection, onChange: () => conversation.schedule(), onNote: analysisNotice,
+    onNavigate: async item => {
+      if (doc?.id !== item.docId || home.isOpen) await openTab({ docId: item.docId });
+      if (doc?.id !== item.docId) throw new Error('无法打开这篇论文');
+      reader.scrollToPoint(item.page, item.rect[1]); reader.refresh(); updateBar();
+    } });
   conversation.contextBlocks = contexts;
   blocks = new Blocks({ reader, selection, call: host.call, enabled: () => prefs.layoutEnabled !== false,
     onNote: analysisNotice, onAdd: () => contexts.add() });

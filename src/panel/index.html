@@ -35,7 +35,7 @@
   /* No z-index here: a stacking context would make the highlights blend with nothing and veil the text. */
   .overlay { position: absolute; inset: 0; pointer-events: none; }
   .sel { position: absolute; background: rgba(47, 91, 211, .24); mix-blend-mode: multiply; }
-  .region { position: absolute; border: 1px dashed var(--accent); background: rgba(47, 91, 211, .07); }
+  .region { position: absolute; border: 2px solid var(--block-color, var(--accent)); background: transparent; }
 
   /* Zotero annotations, under the selection. Highlights are a light multiplied tint so text stays sharp. */
   .anns { position: absolute; inset: 0; }
@@ -44,7 +44,8 @@
   .ann.hl.active { opacity: .55; }
   .ann.ul::after { content: ''; position: absolute; left: 0; right: 0; bottom: -1px; height: 1.5px; background: var(--c); }
   .ann.ul.active { background: var(--c); opacity: .2; mix-blend-mode: multiply; }
-  .ann.img { border: 1.5px solid var(--c); }
+  .ann.img { border: 1.5px solid var(--c); background: var(--c); opacity: .3; mix-blend-mode: multiply; }
+  .ann.img.active { opacity: .42; }
   .ann.txt { border: 1px dashed var(--c); }
   .ann.note { background: var(--c); border-radius: 2px; box-shadow: 0 0 0 1px rgba(0, 0, 0, .2); }
   .ann.mark { border-radius: 50%; background: var(--c); }
@@ -273,9 +274,24 @@
   #debug { position: absolute; left: 0; right: 0; bottom: 0; z-index: 2; padding: 3px 10px; background: var(--bg);
     border-top: 1px solid var(--line); color: var(--muted); font: 11px/1.4 ui-monospace, Menlo, monospace; white-space: nowrap; overflow: hidden; }
 
-  /* Block outlines are quiet until hovered; OCR remains a separate, explicit action. */
-  .block-outline { position:absolute; border:1px solid var(--accent); border-radius:2px; background:rgba(47,91,211,.025); }
-  .block-outline > span { position:absolute; top:-20px; left:0; padding:1px 5px; color:var(--bg); background:var(--accent); font-size:11px; white-space:nowrap; }
+  /* Type colors belong to outlines; only saved annotations tint the paper. */
+  [data-block-type] { --block-color:#396ec2; }
+  [data-block-type="formula"] { --block-color:#8550ad; }
+  [data-block-type="figure"] { --block-color:#117f73; }
+  [data-block-type="table"] { --block-color:#a56813; }
+  [data-block-type="title"] { --block-color:#586a83; }
+  [data-block-type="caption"] { --block-color:#277f98; }
+  .block-outline { position:absolute; border:1px dashed var(--block-color); border-radius:2px; background:transparent; }
+  .block-outline > span { position:absolute; bottom:100%; left:0; padding:1px 5px; color:var(--block-color); background:var(--bg); border:1px solid currentColor; border-radius:3px; font-size:11px; white-space:nowrap; }
+  .context-mark { position:absolute; border:1px dashed var(--block-color); background:transparent; }
+  .context-mark.is-selected { border-color:transparent; }
+  .context-mark.is-linked:not(.is-selected) { border-width:2px; }
+  .context-pin { position:absolute; left:calc(100% + 4px); top:0; display:flex; align-items:center; gap:3px; min-width:26px; min-height:24px; padding:2px 5px; pointer-events:auto; cursor:pointer; color:var(--block-color); background:var(--bg); border:1px solid currentColor; border-radius:4px; font:600 11px/1.2 system-ui,sans-serif; }
+  .context-pin.pin-left { left:auto; right:calc(100% + 4px); }
+  .context-pin.pin-above { left:auto; right:0; top:auto; bottom:calc(100% + 3px); }
+  .context-pin svg { width:12px; height:12px; }
+  .context-pin:focus-visible, #contextList button:focus-visible { outline:2px solid var(--block-color, var(--accent)); outline-offset:2px; }
+  .context-mark.is-linked .context-pin { box-shadow:0 0 0 1px var(--block-color); }
   #layoutButton, #ocrButton { padding:2px 7px; white-space:nowrap; border-radius:4px; }
   #layoutButton[aria-pressed="true"] { color:var(--accent); background:var(--hover); }
   #analysisNotice { position:absolute; z-index:3; bottom:calc(var(--context-h, 0px) + 8px); left:8px; max-width:calc(100% - 16px); background:var(--bg); border:1px solid var(--line); border-radius:4px; padding:4px 8px; color:var(--muted); font-size:12px; }
@@ -290,6 +306,9 @@
   #contextTray { position:absolute; z-index:5; bottom:0; left:0; right:0; border-top:1px solid var(--line); padding:7px 10px; background:var(--bg); display:flex; align-items:center; gap:8px; font-size:12px; }
   #contextList { display:flex; gap:6px; flex:1; overflow:auto; margin:0; padding:0; list-style:none; }
   #contextList li { display:flex; align-items:center; gap:5px; white-space:nowrap; border:1px solid var(--line); border-radius:4px; padding:3px 6px; }
+  #contextList li.is-linked { border-color:var(--block-color); }
+  #contextList .context-jump { color:var(--text); display:flex; align-items:center; gap:5px; }
+  #contextList .context-number { color:var(--block-color); font-weight:600; }
   #contextList button { color:var(--muted); min-width:18px; min-height:20px; }
   #contextClear { color:var(--muted); white-space:nowrap; }
   #scroller { bottom:var(--context-h, 0px); }
