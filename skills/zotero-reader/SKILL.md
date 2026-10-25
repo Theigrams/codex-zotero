@@ -7,6 +7,12 @@ description: "Reading Zotero papers with the user in the Codex reader panel. Use
 
 The user reads papers in the reader panel (tool `reader_open`). Zotero is the only store: annotations and saved answers live there. The user wants to stay in flow — answer what was asked, briefly, and don't add suggestions, check-ins or extra work. The one exception is guided reading, which the user starts (below).
 
+## Verify access before summarizing
+
+Before summarizing a paper, successfully read actual page text or cached full text. The title, page count and an OCR-available descriptor are not the paper body. If the public MCP reader tools are unavailable in Chat, use the expanded reader's `reader_read_pages`, `reader_read_full_text` or `reader_read_annotations` when those WebMCP tools are actually exposed. Selected research papers have `reader_research_status`, `reader_research_full_text` and `reader_research_annotations` equivalents. Local paper retrieval is not a web search.
+
+A tool name mentioned in background context is not proof that the tool is callable. If neither MCP nor the live reader provides a working read operation, state that the paper cannot be verified in this conversation. Do not fill the gap with a generic overview inferred from the title, and do not claim to have read cached OCR merely because its version is present. This local plugin needs a host that exposes local execution; changing to a new Chat does not itself guarantee access.
+
 ## Knowing what the user means
 
 - The panel keeps a short reading context in this conversation (paper, page, selection). For "this / here / 这段 / 这个公式", use it; call `reader_state` if it is missing or stale.

@@ -27,6 +27,7 @@ let browser;
 try{
   browser=await puppeteer.launch({executablePath:'/Applications/Google Chrome.app/Contents/MacOS/Google Chrome',headless:true,defaultViewport:{width:1100,height:900}});
   const page=await browser.newPage(),errors=[];page.on('pageerror',e=>errors.push(e.message));
+  await page.evaluateOnNewDocument(()=>{window.__webTools={};Object.defineProperty(document,'modelContext',{configurable:true,value:{registerTool:t=>window.__webTools[t.name]=t,unregisterTool:name=>delete window.__webTools[name]}});});
   await page.goto(url.replace('/panel','/host'));await page.waitForSelector('iframe');const frame=await(await page.$('iframe')).contentFrame();await frame.waitForFunction(()=>window.__reader?.doc);
   await page.waitForFunction(()=>window.__modelContexts.at(-1)?.structuredContent.annotations?.comments===1);
   assert.ok(!JSON.stringify(await page.evaluate(()=>window.__modelContexts.at(-1))).includes('LONG COMMENT'));
@@ -56,6 +57,15 @@ try{
   assert.equal(done.complete,true);assert.ok(done.tasks.every(t=>t.state==='done'),JSON.stringify(done));assert.equal(uploads,2);
   for(const p of status.papers){const text=await model('paper_full_text',{docId:p.docId});assert.match(text.text,/Research OCR complete/);}
   await model('research_ocr_start',{itemKeys:['PAPER001','PAPER002']});assert.equal(uploads,2);
+  const liveText=JSON.parse(await frame.evaluate(()=>window.__webTools.reader_read_full_text.execute({maxChars:1000})));
+  assert.ok(liveText.content[0].text.includes('Research OCR complete'));
+  assert.ok(!Object.hasOwn(liveText.structuredContent,'text'));
+  const liveAnnotations=JSON.parse(await frame.evaluate(()=>window.__webTools.reader_read_annotations.execute({})));
+  assert.ok(liveAnnotations.content[0].text.includes('updated comment'));
+  const liveOther=JSON.parse(await frame.evaluate(()=>window.__webTools.reader_research_full_text.execute({itemKey:'PAPER002'})));
+  assert.ok(liveOther.content[0].text.includes('Research OCR complete'));
+  const denied=JSON.parse(await frame.evaluate(()=>window.__webTools.reader_research_full_text.execute({itemKey:'OTHER001'})));
+  assert.ok(denied.error);
   assert.equal(await frame.evaluate(()=>window.__reader.doc.id),original);
   await frame.click('#researchButton');await page.setViewport({width:375,height:812});
   assert.equal(await frame.evaluate(()=>document.documentElement.scrollWidth<=innerWidth),true);await page.screenshot({path:'diagnostics/research-mobile.png'});
@@ -64,5 +74,5 @@ try{
   await frame.waitForFunction(()=>window.__research.papers.length===1);
   const preview=await browser.newPage();await preview.goto(url.replace('/panel','/paper-preview?itemKey=PAPER001'));await preview.waitForFunction(()=>document.getElementById('image').naturalWidth>0);await preview.close();
   assert.deepEqual(errors,[]);
-  console.log(JSON.stringify({pass:true,checks:['multi-paper selection','cover thumbnails','independent page preview','goal suggestions','scoped model context','native-form fallback','no upload on selection','complete highlights and comments','annotation revision updates','batch OCR','cached result reuse','per-paper full text','active reader preserved','narrow viewport','host removal sync','standalone resource preview'],uploads}));
+  console.log(JSON.stringify({pass:true,checks:['multi-paper selection','cover thumbnails','independent page preview','goal suggestions','scoped model context','native-form fallback','no upload on selection','complete highlights and comments','annotation revision updates','batch OCR','cached result reuse','per-paper full text','live reader returns body and comments','live research scope boundary','active reader preserved','narrow viewport','host removal sync','standalone resource preview'],uploads}));
 }finally{await browser?.close();server.kill();await new Promise(r=>cloud.close(r));await zotero.close();await rm(root,{recursive:true,force:true});}

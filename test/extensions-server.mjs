@@ -15,6 +15,11 @@ const client=new Client({name:'extension-test',version:'1'});
 try{
  await client.connect(transport);
  const {tools}=await client.listTools();
+ for(const name of ['reader_state','read_pages','paper_context','paper_full_text','research_annotations']) {
+   const t=tools.find(t=>t.name===name);assert.deepEqual(t._meta.ui.visibility,['model','app']);
+   assert.deepEqual(t.annotations,{readOnlyHint:true,destructiveHint:false,openWorldHint:false});
+   assert.equal(t._meta.ui.resourceUri,undefined);
+ }
  for(const [name,type]of[['reader_library','global'],['reader_open','thread'],['reader_file','file']]) assert.equal(tools.find(t=>t.name===name)._meta['openai/ui'].entrypoints[0].type,type);
  assert.deepEqual(tools.find(t=>t.name==='reader_file')._meta['openai/ui'].entrypoints[0].extensions,['.pdf']);
  const readerUri=tools.find(t=>t.name==='reader_open')._meta.ui.resourceUri;

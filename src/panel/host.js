@@ -21,13 +21,14 @@ export async function connect({ displayModes = ['fullscreen'] } = {}) {
     const app = new App({ name: 'codex-zotero', version: '0.1.0' }, { availableDisplayModes: displayModes }, { autoResize: false });
     const extensions = new OpenAIExtensions(app);
     const results = new Set();
-    const host = { app, extensions, mode: 'host', initialResult: null,
+    const callTool = async (name,args={}) => {
+      const r=await app.callServerTool({name,arguments:args});
+      if(r.isError)throw new Error(r.content?.find(c=>c.type==='text')?.text || `${name} failed`);
+      return r;
+    };
+    const host = { callTool, app, extensions, mode: 'host', initialResult: null,
       onResult(fn) { results.add(fn); return () => results.delete(fn); },
-      async call(name, args = {}) {
-        const r = await app.callServerTool({ name, arguments: args });
-        if (r.isError) throw new Error(r.content?.find(c => c.type === 'text')?.text || `${name} failed`);
-        return r.structuredContent;
-      },
+      async call(name, args = {}) { return (await callTool(name,args)).structuredContent; },
     };
     // Register before connect: the host may deliver the entrypoint immediately.
     app.ontoolresult = result => { host.initialResult = result; for (const fn of results) fn(result); };
@@ -43,6 +44,11 @@ export async function connect({ displayModes = ['fullscreen'] } = {}) {
   return {
     app: null,
     mode: 'standalone',
+    async callTool(name,args={}) {
+      const r=await fetch('/api/tool',{method:'POST',headers:{'content-type':'application/json'},body:JSON.stringify({name,arguments:args})});
+      if(!r.ok)throw new Error(await r.text());
+      const result=await r.json();if(result.isError)throw new Error(result.content?.[0]?.text||'读取失败');return result;
+    },
     async call(name, args = {}) {
       const r = await fetch('/api/call', {
         method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ name, arguments: args }),

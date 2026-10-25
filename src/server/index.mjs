@@ -27,6 +27,7 @@ import { Paper } from './paper.mjs';
 import { State } from './state.mjs';
 import { TextService } from './text.mjs';
 import { modelTools } from './tools.mjs';
+import { modelToolMetadata, modelToolResult } from './tool-policy.mjs';
 import { resolvePdf, searchAnnotations, searchLibrary } from './zotero.mjs';
 import { registerExtensions } from './extensions.mjs';
 import { Research, researchTools, researchKeys } from './research.mjs';
@@ -34,7 +35,7 @@ import { Research, researchTools, researchKeys } from './research.mjs';
 const here = dirname(fileURLToPath(import.meta.url));
 const argv = process.argv.slice(2);
 const option = name => (argv.includes(name) ? argv[argv.indexOf(name) + 1] : undefined);
-const URI = 'ui://codex-zotero/reader-v4.html';
+const URI = 'ui://codex-zotero/reader-v5.html';
 const PREVIEW_URI = 'ui://codex-zotero/paper-preview-v1.html';
 const SETTINGS_URI = 'ui://codex-zotero/settings-v1.html';
 const entryIcon = ['light', 'dark'].map(theme => ({ theme, mimeType: 'image/svg+xml', sizes: ['any'],
@@ -473,6 +474,17 @@ if (argv.includes('--standalone')) {
         res.setHeader('Content-Type', 'text/html; charset=utf-8');
         return res.end(await readFile(join(here, 'host.html')));
       }
+      if (req.url === '/api/tool' && req.method === 'POST') {
+        let body = ''; for await (const chunk of req) body += chunk;
+        const { name, arguments: args = {} } = JSON.parse(body);
+        res.setHeader('Content-Type', 'application/json');
+        try {
+          const tool = forModel[name] || forResearch[name];
+          if (tool) return res.end(JSON.stringify(modelToolResult(name, await tool.run(z.object(tool.schema).parse(args)))));
+          if (!appTools[name]) throw new Error('Unknown tool');
+          return res.end(JSON.stringify({ content: [], structuredContent: await appTools[name](z.object(appSchemas[name]).parse(args)) }));
+        } catch(e) { return res.end(JSON.stringify({ isError: true, content: [{type:'text',text:e.message}] })); }
+      }
       if (req.url === '/api/call' && req.method === 'POST') {
         let body = '';
         for await (const chunk of req) body += chunk;
@@ -595,13 +607,9 @@ if (argv.includes('--standalone')) {
   }
 
   for (const [name, tool] of Object.entries({ ...forModel, ...forResearch })) {
-    server.registerTool(name, { description: tool.description, inputSchema: tool.schema, ...(forResearch[name] ? { annotations: { readOnlyHint: !['research_ocr_start','research_ocr_cancel'].includes(name), openWorldHint: name === 'research_ocr_start' } } : name === 'ocr_start' ? { annotations: { readOnlyHint: false, openWorldHint: true } } : {}) }, async args => {
-      try {
-        const r = await tool.run(args);
-        return forResearch[name] ? ok(Object.fromEntries(Object.entries(r).filter(([key]) => key !== 'text')), r.text || JSON.stringify(r)) : ok(r.data ?? {}, r.text);
-      } catch (e) {
-        return fail(e);
-      }
+    server.registerTool(name, { description: tool.description, inputSchema: tool.schema, ...modelToolMetadata(name) }, async args => {
+      try { return modelToolResult(name, await tool.run(args)); }
+      catch (e) { return fail(e); }
     });
   }
 

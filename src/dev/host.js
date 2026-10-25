@@ -21,11 +21,11 @@ window.__toolCalls = [];
 bridge.oncalltool = async params => {
   window.__toolCalls.push(params.name);
   if (window.__callOverrides[params.name]) return { content: [], structuredContent: window.__callOverrides[params.name] };
-  const r = await fetch('/api/call', {
+  const r = await fetch('/api/tool', {
     method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify(params),
   });
   if (!r.ok) return { isError: true, content: [{ type: 'text', text: await r.text() }] };
-  return { content: [{ type: 'text', text: 'ok' }], structuredContent: await r.json() };
+  return r.json();
 };
 window.__messages = [];
 bridge.onmessage = async (params, extra) => { window.__messages.push({ ...params, _meta: extra._meta }); return {}; };

@@ -15,7 +15,7 @@
 | Extended forms | `reader_choose` 单选；`research_choose` 原生多选文献，支持封面缩略图、独立翻页预览、目标建议和自定义目标。取消不选择，不支持时回退候选列表 |
 | Open local file | 论文菜单「打开原 PDF」，通过 `files.open` 使用服务端返回的原文件路径 |
 | Resource subscriptions | 文件入口订阅原资源，宿主通知文件更新后重新打开 PDF，指纹变化使旧 OCR 缓存不再复用 |
-| WebMCP | `document.modelContext` 中注册当前视图、跳页、选择/加入版面块、移除上下文操作；没有该 API 的宿主保留服务端工具 |
+| WebMCP | 注册当前页/全文/批注及所选研究文献的只读读取工具，保留视图、跳页、选择/移除操作。返回正文 content，不只返回元数据；无此 API 时仍依赖服务端工具 |
 | Display modes | 完整阅读器仅声明 fullscreen，并以 fullscreen 为首选；设置页独立支持 inline/fullscreen。提问先同步上下文，保持阅读器展开 |
 | File download | 论文菜单「导出上下文」通过标准 MCP Apps downloadFile 保存 Markdown，包含已选块、来源和可回到原文的深链接；按宿主能力显示，取消不移除上下文 |
 | Styling | 内联官方扩展样式，应用宿主主题、样式变量、安全区和光标偏好；原 PDF 页面保持原始外观 |
@@ -23,7 +23,7 @@
 
 阅读器不再提供独立的问题输入框、发送按钮或当前对话草稿按钮，避免与用户正在编辑的原生草稿竞争。「加入上下文」保持阅读状态；「去提问」幂等地加入当前选区，等上下文发布完成后提示使用原生对话框。提问保持 fullscreen，不再请求折叠到 inline。问题内容和发送时机始终由原生对话框控制；准备上下文不会被记录为已经提问。
 
-完整阅读器使用 `fullscreen`，资源元数据与 App 初始化能力保持一致；UI resource 更新为 `reader-v4.html`，避免复用旧显示声明。`inline` 指对话内嵌，不能将它称作原生侧边分栏；只在独立设置页保留。当前官方协议没有设置对话框停靠位置或强制聚焦输入框的接口，也不提供可用于这里的 `pip`。所有 entrypoint 仍由宿主以 fullscreen 打开。
+完整阅读器使用 `fullscreen`，资源元数据与 App 初始化能力保持一致；UI resource 更新为 `reader-v5.html`，避免复用旧显示声明。`inline` 指对话内嵌，不能将它称作原生侧边分栏；只在独立设置页保留。当前官方协议没有设置对话框停靠位置或强制聚焦输入框的接口，也不提供可用于这里的 `pip`。所有 entrypoint 仍由宿主以 fullscreen 打开。
 
 原生设置与面板设置共用同一份偏好；活动面板轮询偏好版本，避免打开原生设置后旧界面仍使用过期值。密钥不进入原生 primitive settings 的 schema/values，仅通过 App 专用密码输入界面保存。
 
@@ -61,3 +61,6 @@ PDF 文件入口是只读阅读器，不调用资源写回 API，也不把 Zoter
 
 
 多篇研究的文献集合存放在当前 App 的 model context，复用 updateId 确认与宿主删除通知，不用全局“研究项目”覆盖其他对话。论文全文和评论正文不随翻页自动注入。当前论文的批注条数/版本随批注层更新；正文由 `research_annotations` 按需读取。批量任务与全文缓存按文档处理，但不同会话是否已读取仍由各自上下文决定。详见 [多篇研究说明](RESEARCH.md)。
+
+
+公开读取工具现显式声明 model/app 可见性及只读、非破坏、封闭资源属性。Chat 能看到阅读器上下文不等于拥有 MCP 读取工具；已补充页面内只读入口，仍需目标宿主提供相应能力。见 [Chat 兼容性与验证](CHAT_COMPATIBILITY.md)。

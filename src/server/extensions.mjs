@@ -38,7 +38,7 @@ export function registerExtensions(server, { state, searchLibrary, prefsChanged,
   });
   server.registerTool('reader_choose', {
     title: '选择论文', description: 'Ask the user to choose a paper from Zotero search results using a native form when available. Returns the chosen itemKey; use reader_open to open it. Does not run OCR.',
-    inputSchema: { query: z.string().min(1).max(200) }, annotations: { readOnlyHint: true },
+    inputSchema: { query: z.string().min(1).max(200) }, annotations: { readOnlyHint: true, destructiveHint:false, openWorldHint:false }, _meta:{ui:{visibility:['model','app']}},
   }, async ({ query }) => {
     const items = await searchLibrary(query, 12);
     const caps = server.server.getClientCapabilities();
@@ -57,7 +57,7 @@ export function registerExtensions(server, { state, searchLibrary, prefsChanged,
   });
   if (research) server.registerTool('research_choose', {
     title: '选择研究文献', description: 'Let the user select multiple Zotero papers with thumbnails and preview, and a suggested or custom research objective. Returns references and OCR/annotation availability, never starts OCR. Use the chosen set for comparisons or reviews.',
-    inputSchema: { query: z.string().max(200).default('') }, annotations: { readOnlyHint: true },
+    inputSchema: { query: z.string().max(200).default('') }, annotations: { readOnlyHint: true, destructiveHint:false, openWorldHint:false }, _meta:{ui:{visibility:['model','app']}},
   }, async ({query}) => {
     const papers = await research.candidates(query);
     const caps = server.server.getClientCapabilities();
