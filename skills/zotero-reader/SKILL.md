@@ -15,6 +15,17 @@ The user reads papers in the reader panel (tool `reader_open`). Zotero is the on
 - When a library search is ambiguous and the user needs to choose, `reader_choose` can present a native selection form; unsupported hosts return candidates instead. Respect cancellation.
 - When available, the live app tools `reader_view`, `reader_go_to_page`, `reader_select_block` and `reader_remove_context` operate on the current panel. Use them for requested page/selection/context actions; otherwise use the server tools. Adding a block is explicit context selection, not sending a message.
 
+## Multi-paper research and user annotations
+
+- `research` in the reader context contains the papers explicitly selected for this conversation, the suggested/custom objective, and whether to include user annotations. A paper attachment is a reference, not its full text. Do not substitute unrelated papers or treat merely selected papers as already read.
+- Use `research_choose` when the user wants to choose several papers: its native form supports thumbnails, expanded page previews, multiple resources, goal suggestions and a custom goal. Respect cancellation. If the host falls back to a candidate list, ask the user to choose or use the reader's 研究 panel; never assume every search result was selected.
+- For comparisons, literature reviews and research-gap questions, first call `research_status` with the selected item keys. It resolves document ids without replacing the visible paper and reports OCR and annotation availability for each paper.
+- If full text is needed, call `research_ocr_start` for the missing papers. It observes the global OCR permission and reuses complete results and active jobs. Set `userRequested:true` only for an explicit request to recognize/upload those papers. Merely adding references is not an upload request. Poll `research_ocr_status` at reasonable intervals; `complete:true` means all tasks settled, so inspect each paper's state and report failures. Retry only missing/failed papers. Do not claim cancelled/failed papers were read.
+- Once ready, use `paper_full_text` with each returned docId. Follow version/nextOffset to the end, then reuse that version in this conversation. Do not inject every full text again on every turn.
+- When includeAnnotations is true, use `research_annotations(itemKey)` for the user's full highlights and comments. It returns complete text with character pagination; follow nextOffset and the returned version. If the version changed, restart at offset 0. Distinguish quoted paper text, the user's comment, and your analysis. Respect cached/offline warnings and pending writes. When includeAnnotations is false, do not fetch user comments merely because they exist.
+- The ordinary reading context also carries annotation count/version changes. For questions about “我的高亮 / 我写的评论”, read them through the tools rather than guessing from visible colors. `list_annotations` is a quick filtered summary; `research_annotations` supplies the unabridged text. `read_notes` is separate and reads Zotero notes, not PDF annotations.
+- Cite the paper and original PDF page in cross-paper conclusions; separate evidence, uncertainty and your inference. A reference preview does not establish the whole paper's methods or conclusions.
+
 ## Layout blocks and OCR
 
 - Explicit context attachments name their paper, page, block type and text source. Use the attached blocks as the user's selection; formulas, figures and tables should be checked against the attached original image.

@@ -29,11 +29,13 @@ import { TextService } from './text.mjs';
 import { modelTools } from './tools.mjs';
 import { resolvePdf, searchAnnotations, searchLibrary } from './zotero.mjs';
 import { registerExtensions } from './extensions.mjs';
+import { Research, researchTools, researchKeys } from './research.mjs';
 
 const here = dirname(fileURLToPath(import.meta.url));
 const argv = process.argv.slice(2);
 const option = name => (argv.includes(name) ? argv[argv.indexOf(name) + 1] : undefined);
-const URI = 'ui://codex-zotero/reader-v3.html';
+const URI = 'ui://codex-zotero/reader-v4.html';
+const PREVIEW_URI = 'ui://codex-zotero/paper-preview-v1.html';
 const SETTINGS_URI = 'ui://codex-zotero/settings-v1.html';
 const entryIcon = ['light', 'dark'].map(theme => ({ theme, mimeType: 'image/svg+xml', sizes: ['any'],
   src: 'data:image/svg+xml,' + encodeURIComponent(`<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 20 20" fill="none" stroke="${theme === 'dark' ? '#f5f5f5' : '#242424'}" stroke-width="1.33"><path d="M10 5C7 3 4 3 2 4v12c3-1 5-1 8 1 3-2 5-2 8-1V4c-2-1-5-1-8 1Zm0 0v12"/></svg>`),
@@ -166,9 +168,29 @@ async function navigate(doc, target) {
   return Date.now() - lastPoll < 5000;
 }
 
+// Background research resolves papers without opening or replacing the active tab.
+const researchDocs = new Map();
+async function researchDoc(itemKey, { remember = true } = {}) {
+  let entry = researchDocs.get(itemKey);
+  if (!entry || Date.now() - entry.at >= 30000) {
+    entry = { at: Date.now(), remembered: false,
+      promise: resolvePdf({ itemKey }).then(source => documents.open(source, { background: true })) };
+    researchDocs.set(itemKey, entry);
+  }
+  try {
+    const doc = await entry.promise;
+    // Rendering a search thumbnail must not populate the user's reading history.
+    if (remember && !entry.remembered) { await state.touch(doc); entry.remembered = true; }
+    return doc;
+  } catch(e) { researchDocs.delete(itemKey); throw e; }
+}
+
+const research = new Research({ resolve: researchDoc, analysis, annotations, renderer, search: searchLibrary, recent: () => state.recent(20) });
+
 const ctx = {
   analysis, annotations, maps, readingNotes, paper, pool, state, docById, activeDoc, paperTab, tabsView, view: () => view, navigate, searchLibrary, searchAnnotations, live: () => live, asked: () => asked };
 const forModel = modelTools(ctx);
+const forResearch = researchTools(research);
 
 const CAPTION_KIND = { fig: '图', tab: '表', alg: '算法' };
 async function outlineX(doc, page, y, kind) {
@@ -180,6 +202,11 @@ async function outlineX(doc, page, y, kind) {
 }
 
 const appTools = {
+  async research_choose({ query = '' }) { return { requiresSelection: true, papers: await research.candidates(query) }; },
+  async research_candidates({ query = '' }) { return { papers: await research.candidates(query) }; },
+  async research_prepare({ itemKeys }) { return research.status(itemKeys); },
+  async research_preview_data({ itemKey, page = 1, detail = false }) { return research.preview(itemKey, page, detail); },
+  ...Object.fromEntries(Object.entries(forResearch).map(([name, tool]) => [name, tool.run])),
   async layout_page({ docId, page }) { return analysis.layout(documents.get(docId), page); },
   async ocr_job_status({ docId }) { return analysis.status(documents.get(docId)); },
   async ocr_job_start({ docId, force }) { return analysis.start(documents.get(docId), { force }); },
@@ -345,6 +372,11 @@ const selectionSchema = z.object({
   rects: z.array(rect).max(200).optional(), rect: rect.optional(), a: z.number().int().optional(),
 });
 const appSchemas = {
+  research_choose: { query: z.string().max(200).default('') },
+  research_candidates: { query: z.string().max(200).default('') },
+  research_prepare: { itemKeys: researchKeys },
+  research_preview_data: { itemKey: z.string().regex(/^[A-Z0-9]{8}$/), page: z.number().int().min(1).default(1), detail: z.boolean().default(false) },
+  ...Object.fromEntries(Object.entries(forResearch).map(([name, tool]) => [name, tool.schema])),
   document_file: { docId: z.string() },
   file_open: {},
   layout_page: { docId: z.string(), page: z.number().int().min(1) },
@@ -411,6 +443,7 @@ async function openReader({ itemKey, attachmentKey } = {}) {
 }
 
 function shutdown() {
+  research.close();
   analysis.close();
   pool.close();
   text.close();
@@ -423,6 +456,7 @@ if (argv.includes('--standalone')) {
   else if (option('--item')) await openSource(await resolvePdf({ itemKey: option('--item') }));
   const http = createServer(async (req, res) => {
     try {
+      if (req.url?.startsWith('/paper-preview')) { res.setHeader('Content-Type', 'text/html; charset=utf-8'); return res.end(await readFile(join(here, 'paper-preview.html'), 'utf8')); }
       if (req.url === '/panel') {
         res.setHeader('Content-Type', 'text/html; charset=utf-8');
         // Mirror what the Codex panel sandbox allows, so the preflight fails where Codex would:
@@ -454,7 +488,7 @@ if (argv.includes('--standalone')) {
         const { name, arguments: args } = JSON.parse(body);
         res.setHeader('Content-Type', 'application/json');
         try {
-          return res.end(JSON.stringify(await forModel[name].run(args || {})));
+          return res.end(JSON.stringify(await ({...forModel,...forResearch})[name].run(args || {})));
         } catch (e) {
           return res.end(JSON.stringify({ error: e.message }));
         }
@@ -474,7 +508,7 @@ if (argv.includes('--standalone')) {
   const server = new McpServer({ name: 'codex-zotero', version: '0.1.0', icons: entryIcon });
   const ok = (data, text = 'ok') => ({ content: [{ type: 'text', text }], structuredContent: data });
   const fail = e => ({ isError: true, content: [{ type: 'text', text: e.message }] });
-  registerExtensions(server, { state, searchLibrary, prefsChanged: () => { prefsRevision++; } });
+  registerExtensions(server, { state, searchLibrary, research, prefsChanged: () => { prefsRevision++; } });
 
   registerAppResource(server, 'reader', URI, { mimeType: RESOURCE_MIME_TYPE }, async () => ({
     contents: [{
@@ -485,6 +519,18 @@ if (argv.includes('--standalone')) {
       },
     }],
   }));
+
+  registerAppResource(server, 'paper-preview', PREVIEW_URI, { mimeType: RESOURCE_MIME_TYPE }, async () => ({ contents: [{
+    uri: PREVIEW_URI, mimeType: RESOURCE_MIME_TYPE, text: await readFile(join(here, 'paper-preview.html'), 'utf8'),
+    _meta: { ui: { prefersBorder: false }, 'openai/ui': { availableDisplayModes: ['inline','fullscreen'], preferredDisplayMode: 'inline' } },
+  }] }));
+  registerAppTool(server, 'research_preview', {
+    title: '论文预览', description: 'Preview a selected Zotero paper without replacing the active reader or starting OCR.',
+    inputSchema: { itemKey: z.string().regex(/^[A-Z0-9]{8}$/), page: z.number().int().min(1).default(1) },
+    annotations: { readOnlyHint: true }, _meta: { ui: { resourceUri: PREVIEW_URI, visibility: ['app'] } },
+  }, async ({itemKey,page}) => {
+    try { return ok(await research.preview(itemKey,page,true)); } catch(e) { return fail(e); }
+  });
 
   registerAppResource(server, 'settings', SETTINGS_URI, { mimeType: RESOURCE_MIME_TYPE }, async () => ({ contents: [{
     uri: SETTINGS_URI, mimeType: RESOURCE_MIME_TYPE, text: await readFile(join(here, 'settings.html'), 'utf8'),
@@ -535,6 +581,7 @@ if (argv.includes('--standalone')) {
   });
 
   for (const [name, run] of Object.entries(appTools)) {
+    if (forResearch[name] || name === 'research_choose') continue;
     registerAppTool(server, name, {
       description: `Reader panel internal: ${name}`, inputSchema: appSchemas[name],
       _meta: { ui: { resourceUri: URI, visibility: ['app'] } },
@@ -547,11 +594,11 @@ if (argv.includes('--standalone')) {
     });
   }
 
-  for (const [name, tool] of Object.entries(forModel)) {
-    server.registerTool(name, { description: tool.description, inputSchema: tool.schema, ...(name === 'ocr_start' ? { annotations: { readOnlyHint: false, openWorldHint: true } } : {}) }, async args => {
+  for (const [name, tool] of Object.entries({ ...forModel, ...forResearch })) {
+    server.registerTool(name, { description: tool.description, inputSchema: tool.schema, ...(forResearch[name] ? { annotations: { readOnlyHint: !['research_ocr_start','research_ocr_cancel'].includes(name), openWorldHint: name === 'research_ocr_start' } } : name === 'ocr_start' ? { annotations: { readOnlyHint: false, openWorldHint: true } } : {}) }, async args => {
       try {
         const r = await tool.run(args);
-        return ok(r.data ?? {}, r.text);
+        return forResearch[name] ? ok(Object.fromEntries(Object.entries(r).filter(([key]) => key !== 'text')), r.text || JSON.stringify(r)) : ok(r.data ?? {}, r.text);
       } catch (e) {
         return fail(e);
       }

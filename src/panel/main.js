@@ -20,6 +20,7 @@ import { Reader } from './reader.js';
 import { Selection } from './selection.js';
 import { Settings } from './settings.js';
 import { timing } from './timing.js';
+import { ResearchPanel } from './research.js';
 import { Interactions } from './interactions.js';
 
 const $ = id => document.getElementById(id);
@@ -48,6 +49,7 @@ let tabs = [];
 let navSeen = 0;
 let prefsSeen = 0;
 let interactions = null;
+let researchPanel = null;
 let prefs = { renderMode: 'aligned' };
 let keys = keymap();
 const palette = () => prefs.palette?.length ? prefs.palette : DEFAULT_PALETTE;
@@ -572,6 +574,8 @@ function runAction(id) {
 }
 
 function onKey(e) {
+  if (e.key === 'Escape' && researchPanel && !$('researchPreview').hidden) { e.preventDefault(); researchPanel.closePreview(); return; }
+  if (e.key === 'Escape' && researchPanel && !$('researchPanel').hidden) { e.preventDefault(); researchPanel.close(); return; }
   if (e.key === 'Alt') document.body.classList.add('alt');
   if (['annComment', 'findInput', 'search'].includes(e.target.id)) return; // these handle their own keys
   if (e.target.closest?.('#settings') && e.target.matches('input[type=text], input[type=password], textarea')) return;
@@ -651,7 +655,7 @@ async function poll() {
     }
     if (r.superseded) {
       conversation.retire();
-      interactions?.destroy();
+      interactions?.destroy(); researchPanel?.destroy();
       annotations.stop();
       popup.close();
       drawer.close();
@@ -719,7 +723,11 @@ async function main() {
       host.call('position_save', { docId: doc.id, ...position }).catch(() => {});
     },
   });
-  annotations = new AnnotationLayer({ reader, call: host.call, onChange: () => { popup.render(); popup.place(); drawer.render(); } });
+  annotations = new AnnotationLayer({ reader, call: host.call, onChange: () => {
+    popup.render(); popup.place(); drawer.render();
+    if (annotations.doc) conversation.setAnnotationStatus(annotations.doc.id, { count: annotations.items.length,
+      comments: annotations.items.filter(a => a.comment).length, version: annotations.rev, pending: annotations.pending, error: annotations.error });
+  } });
   const openUrl = url => (host.app ? host.app.openLink({ url }).catch(() => {}) : window.open(url, '_blank', 'noopener'));
   popup = new AnnotationPopup({ layer: annotations, openUrl, palette });
   drawer = new AnnotationDrawer({
@@ -754,6 +762,8 @@ async function main() {
       reader.scrollToPoint(item.page, item.rect[1]); reader.refresh(); updateBar();
     } });
   conversation.contextBlocks = contexts;
+  researchPanel = new ResearchPanel({ host, onChange: () => conversation.schedule(), prepare: async () => { await conversation.sync(); await conversation.publishQueue; analysisNotice('研究文献已加入上下文，请在 ChatGPT 对话框中提出问题'); } });
+  conversation.research = researchPanel;
   blocks = new Blocks({ reader, selection, call: host.call, enabled: () => prefs.layoutEnabled !== false,
     onNote: analysisNotice, onAdd: () => contexts.add() });
   ocr = new OcrPanel({ reader, call: host.call, onError: analysisNotice, onStatus: (id, status) => conversation.setFullTextStatus(id, status), onChanged: () => {
@@ -812,7 +822,7 @@ async function main() {
   $('settingsButton').addEventListener('click', toggleSettings);
   $('settingsClose').addEventListener('click', closeSettings);
   $('retry').addEventListener('click', start);
-  window.__blocks = blocks; window.__contexts = contexts; window.__ocr = ocr;
+  window.__research = researchPanel; window.__blocks = blocks; window.__contexts = contexts; window.__ocr = ocr;
   window.__reader = reader; // for acceptance tests that read metrics from the DOM
   window.__selection = selection;
   window.__annotations = annotations;
@@ -823,7 +833,7 @@ async function main() {
     showFile: opened => { tabs = opened.tabs; showTab(opened.active); } });
   interactions.start();
   if (host.app) host.app.onteardown = async () => {
-    interactions.destroy();
+    interactions.destroy(); researchPanel?.destroy();
     clearTimeout(conversation.timer);
     if (doc && reader.doc) await host.call('position_save', { docId: doc.id, ...reader.position() }).catch(() => {});
     annotations.stop();

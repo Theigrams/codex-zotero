@@ -35,6 +35,14 @@ try{
  assert.ok(doc.id);assert.equal(doc.itemKey,null);
  const resume=await client.callTool({name:quick.target.name,arguments:quick.target.arguments});
  assert.equal(resume.structuredContent.view,'reader');assert.equal(resume.structuredContent.active.document.id,doc.id);
+ const researchStatus=await client.callTool({name:'research_status',arguments:{itemKeys:['PAPER001']}});
+ assert.equal(researchStatus.structuredContent.papers.length,1);
+ const annotationText=await client.callTool({name:'research_annotations',arguments:{itemKey:'PAPER001'}});
+ assert.ok(annotationText.content[0].text.includes('没有批注'));assert.equal(annotationText.structuredContent.count,0);
+ const blockedBatch=await client.callTool({name:'research_ocr_start',arguments:{itemKeys:['PAPER001']}});
+ assert.equal(blockedBatch.structuredContent.tasks[0].state,'blocked');
+ const preview=await client.callTool({name:'research_preview',arguments:{itemKey:'PAPER001'}});
+ assert.ok(preview.structuredContent.image.startsWith('data:image/png;base64,'));
  const file=await client.callTool({name:'document_file',arguments:{docId:doc.id}});assert.equal(file.structuredContent.path,pdf);
  await client.callTool({name:'panel_hello',arguments:{instance:'test-main'}});
  await client.callTool({name:'reader_settings',arguments:{}});
@@ -44,5 +52,5 @@ try{
  await client.callTool({name:'reader_open',arguments:{itemKey:'PAPER001'}});
  const reopened=await client.callTool({name:'file_open',arguments:{},_meta:{'openai/resource':{path:pdf}}});
  assert.equal(reopened.structuredContent.active.document.itemKey,'PAPER001','file viewer preserves known Zotero identity');
- console.log(JSON.stringify({pass:true,checks:['fullscreen-only reader', 'quick action resumes the last document or opens the library','global/thread/PDF entrypoints','settings resource','file access requires host metadata','authorized PDF open','original file path','settings preserves reader','mentions','paper resource','file viewer preserves Zotero identity']}));
+ console.log(JSON.stringify({pass:true,checks:['research status and full annotations','model OCR permission','independent preview','fullscreen-only reader', 'quick action resumes the last document or opens the library','global/thread/PDF entrypoints','settings resource','file access requires host metadata','authorized PDF open','original file path','settings preserves reader','mentions','paper resource','file viewer preserves Zotero identity']}));
 }finally{await client.close();await transport.close();await zotero.close();await rm(root,{recursive:true,force:true});}

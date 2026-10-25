@@ -335,6 +335,19 @@
   #toolbar button { white-space:nowrap; flex-shrink:0; }
   #toolbarNote:not([hidden]) { flex-basis:100%; font-size:11px; }
   #contextAsk { white-space:nowrap; color:var(--accent); }
+  #researchPanel { width:min(650px,100%); padding:14px; overflow:auto; }
+  #researchPanel header, .research-search, .research-heading, #researchPanel footer { display:flex; gap:8px; align-items:center; }
+  #researchPanel header h2, .research-heading strong { flex:1; }
+  .research-search input { flex:1; min-width:80px; }
+  #researchPanel input[type=search], #researchGoal { font:inherit; padding:7px; color:var(--text); background:var(--bg); border:1px solid var(--line); border-radius:5px; }
+  #researchPanel ul { list-style:none; padding:0; margin:10px 0; }
+  #researchPanel li { display:flex; gap:10px; align-items:center; padding:8px 0; border-bottom:1px solid var(--line); }
+  #researchPanel li div { flex:1; min-width:0; } #researchPanel li strong { display:block; font-weight:500; } #researchPanel small { display:block; color:var(--muted); margin-top:5px; }
+  .research-cover { width:48px; height:64px; flex-shrink:0; padding:0; border:1px solid var(--line); } .research-cover img { width:100%; height:100%; object-fit:contain; }
+  .research-goal { display:block; margin-top:14px; } #researchGoal { display:block; width:100%; margin:6px 0; box-sizing:border-box; }
+  .research-check { display:flex; align-items:center; gap:6px; margin:12px 0; } .research-hint,#researchNotice { color:var(--muted); font-size:12px; }
+  #researchPreview { position:absolute; inset:40px 12px 12px; z-index:15; background:var(--bg); padding:12px; border:1px solid var(--line); border-radius:8px; overflow:auto; }
+  #researchPreview header { display:flex; align-items:center; gap:10px; } #researchPreviewTitle { flex:1; } #researchPreview img { display:block; max-width:100%; margin:10px auto; }
   .settings-only > :not(#settings):not(#message) { display:none !important; }
   .settings-only #settings { inset:0; width:100%; max-width:none; border:none; }
   button, .context-pin-actions button { cursor:var(--cursor-interaction, pointer); }
@@ -358,6 +371,7 @@
   </button>
   <button id="layoutButton" title="点击整块选择；按住 ⇧ 点击直接加入上下文" aria-pressed="true">版面</button>
   <button id="ocrButton" title="整篇识别与全文上下文" aria-expanded="false" aria-controls="ocrPanel"><span id="ocrBadge">OCR…</span></button>
+  <button id="researchButton" title="多篇论文、批注与文献研究" aria-expanded="false" aria-controls="researchPanel">研究</button>
   <button id="readerMore" title="论文操作" aria-label="论文操作" aria-expanded="false" aria-controls="readerMenu">⋯</button>
   <button id="settingsButton" class="icon" title="设置（⌘,）" aria-label="设置">
     <svg width="14" height="14" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.4" aria-hidden="true">
@@ -373,6 +387,21 @@
   <button id="exportContext" hidden>导出上下文</button>
   <button id="paperNewDraft" hidden>在新对话中讨论</button>
 </div>
+
+<aside id="researchPanel" class="drawer" hidden aria-label="文献研究">
+  <header><h2>文献研究</h2><button id="researchClose" aria-label="关闭研究面板">✕</button></header>
+  <div class="research-search"><input id="researchSearch" type="search" aria-label="搜索研究文献" placeholder="标题、作者、年份"><button id="researchSearchButton">搜索</button><button id="researchNative" title="使用宿主的多选、封面预览和目标建议">系统选择器</button></div>
+  <p id="researchNotice" role="status"></p><ul id="researchResults"></ul>
+  <label class="research-goal">研究目标<input id="researchGoal" list="researchGoalOptions" maxlength="1000" placeholder="比较方法、文献综述或自己的问题"></label><datalist id="researchGoalOptions"></datalist>
+  <label class="research-check"><input type="checkbox" id="researchAnnotations" checked>结合我的高亮与评论</label>
+  <div class="research-heading"><strong>已选文献</strong><button id="researchClear">清空</button></div><ul id="researchSelected"></ul>
+  <p class="research-hint">文献作为引用加入当前对话。模型根据你的问题决定是否识别全文；已有结果会复用。</p>
+  <footer><button id="researchUse">用于研究</button><button id="researchOcr" title="明确请求将所选论文上传到 MinerU 识别">识别所选</button><button id="researchCancel" hidden>取消识别</button></footer>
+</aside>
+<section id="researchPreview" hidden role="dialog" aria-label="论文预览">
+  <header><strong id="researchPreviewTitle"></strong><button id="researchPreviewClose" aria-label="关闭预览">✕</button></header>
+  <div><button id="researchPreviewPrev">上一页</button><span id="researchPreviewPage"></span><button id="researchPreviewNext">下一页</button></div><img id="researchPreviewImage" alt="论文页面预览">
+</section>
 
 <aside id="annDrawer" class="drawer" hidden aria-label="批注">
   <header><h2>批注</h2><span id="drawerCount"></span><button id="drawerClose" aria-label="关闭">✕</button></header>

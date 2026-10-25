@@ -57,6 +57,10 @@ export async function buildPlugin({ python = process.env.CODEX_ZOTERO_PYTHON || 
   new Script(html.match(/<script>([\s\S]*)<\/script>/)[1]); // syntax check of the inlined bundle
   await writeFile(`${root}/dist/panel.html`, html);
 
+  const previewUI = await build({ entryPoints: ['src/panel/paper-preview.js'], bundle: true, write: false, platform: 'browser', format: 'iife', target: 'chrome120', minify: true });
+  const previewHtml = (await readFile('src/panel/paper-preview.html', 'utf8')).replace('/* BUNDLED_PREVIEW */', () => previewUI.outputFiles[0].text.replace(/<\/script/gi, '<\\/script'));
+  await writeFile(`${root}/dist/paper-preview.html`, previewHtml);
+
   // Preflight-only test host (AppBridge over postMessage, like Codex); served by --standalone at /host.
   const host = await build({ entryPoints: ['src/dev/host.js'], bundle: true, write: false, platform: 'browser', format: 'esm', target: 'chrome120', minify: true, logLevel: 'warning' });
   await writeFile(`${root}/dist/host.html`, '<!doctype html><meta charset="utf-8"><title>preflight host</title>'

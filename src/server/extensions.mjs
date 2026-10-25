@@ -3,9 +3,11 @@ import { ResourceTemplate } from '@modelcontextprotocol/sdk/server/mcp.js';
 import { z } from 'zod';
 import { localApi } from './zotero.mjs';
 import { readerDeepLink } from '../shared/reader-links.mjs';
+import { RESEARCH_GOALS, MAX_RESEARCH_PAPERS, paperKey } from '../shared/research.mjs';
+import { mapLimit } from './research.mjs';
 import { OpenAIFormResultSchema } from '@openai/mcp-extensions';
 
-export function registerExtensions(server, { state, searchLibrary, prefsChanged, readItem = localApi }) {
+export function registerExtensions(server, { state, searchLibrary, prefsChanged, research, readItem = localApi }) {
   const extensions = new OpenAIExtensions(server);
   const values = async () => {
     const p = await state.prefs();
@@ -52,6 +54,35 @@ export function registerExtensions(server, { state, searchLibrary, prefsChanged,
     const chosen = answer.action === 'accept' && items.find(p => p.key === answer.content?.itemKey);
     if (answer.action === 'accept' && !chosen) throw new Error('所选论文不在搜索结果中。');
     return { content: [{ type: 'text', text: JSON.stringify(chosen || { cancelled: true }) }] };
+  });
+  if (research) server.registerTool('research_choose', {
+    title: '选择研究文献', description: 'Let the user select multiple Zotero papers with thumbnails and preview, and a suggested or custom research objective. Returns references and OCR/annotation availability, never starts OCR. Use the chosen set for comparisons or reviews.',
+    inputSchema: { query: z.string().max(200).default('') }, annotations: { readOnlyHint: true },
+  }, async ({query}) => {
+    const papers = await research.candidates(query);
+    const caps = server.server.getClientCapabilities();
+    const fallback = { requiresSelection:true, papers, goals:RESEARCH_GOALS, instruction:'宿主没有可用的多选表单。请让用户明确选择文献，也可在阅读器的研究面板多选；不要自行把所有搜索结果加入研究。' };
+    const reply = data => ({content:[{type:'text',text:JSON.stringify(data)}],structuredContent:data});
+    if (!papers.length || !(caps?.extensions?.['openai/elicitation']?.form || caps?.experimental?.['openai/elicitation']?.form)) return reply(fallback);
+    const options = await mapLimit(papers,2,async p=>{
+      let thumbnail; try { thumbnail=(await research.preview(p.itemKey,1)).image; } catch {}
+      return {uri:p.uri,name:p.title,title:p.title,mimeType:'application/pdf',description:[p.creators,p.year].filter(Boolean).join(' · '),
+        _meta:{...(thumbnail?{'openai/thumbnail':{src:thumbnail,mimeType:'image/png'}}:{}),
+          'openai/preview':{target:{type:'mcp_app_tool',name:'research_preview',arguments:{itemKey:p.itemKey}}}}};
+    });
+    let answer;
+    try { answer=await server.server.request({method:'openai/elicitation/create',params:{mode:'form',message:'选择研究文献和阅读目标',requestedSchema:{
+      type:'object',required:['papers','objective','includeAnnotations'],properties:{
+        papers:{type:'array',title:'研究文献（可多选，点击预览）',minItems:1,maxItems:MAX_RESEARCH_PAPERS,items:{type:'string',format:'uri'},'x-openai-input':{type:'resource',selection:'explicit',options}},
+        objective:{type:'string',title:'研究目标',maxLength:1000,default:RESEARCH_GOALS[0],'x-openai-suggestions':RESEARCH_GOALS.map(value=>({const:value,title:value}))},
+        includeAnnotations:{type:'boolean',title:'结合我的高亮与评论',default:true},
+      },
+    }}},OpenAIFormResultSchema); } catch {return reply(fallback);}
+    if(answer.action!=='accept')return reply({cancelled:true});
+    const selected=answer.content?.papers, objective=answer.content?.objective;
+    if(!Array.isArray(selected)||!selected.length||selected.length>MAX_RESEARCH_PAPERS||selected.some(uri=>!papers.some(p=>p.uri===uri))||typeof objective!=='string'||objective.length>1000||typeof answer.content.includeAnnotations!=='boolean') throw new Error('研究文献或目标无效。');
+    const status=await research.status([...new Set(selected.map(paperKey))]);
+    return reply({...status,papers:status.papers.map(p=>({...papers.find(candidate=>candidate.itemKey===p.itemKey),...p})),objective,includeAnnotations:answer.content.includeAnnotations});
   });
   server.registerResource('zotero-paper', new ResourceTemplate('zotero://paper/{itemKey}', { list: undefined }), { mimeType: 'text/plain' }, async (uri, { itemKey }) => {
     if (!/^[A-Z0-9]{8}$/.test(itemKey)) throw new Error('论文标识无效。');

@@ -2,6 +2,7 @@
 // (updateModelContext — the host keeps only the latest one). Questions are written in the native
 // composer; the reader prepares context without changing the current draft.
 
+import { researchContent } from '../shared/research.mjs';
 import { contextContent } from '../shared/context-blocks.mjs';
 import { fullTextDescriptor, fullTextContext } from '../shared/full-text.mjs';
 
@@ -18,7 +19,14 @@ export class Conversation {
     this.elsewhere = null; // what the panel shows when it isn't a paper (a note, the home page)
     this.note = null;      // { key, title } of the note on screen, if any
     this.fullTexts = new Map();
+    this.annotationStates = new Map();
     window.__sent = [];
+  }
+
+  setAnnotationStatus(docId, state) {
+    if (JSON.stringify(this.annotationStates.get(docId)) === JSON.stringify(state)) return;
+    this.annotationStates.set(docId, state);
+    this.schedule();
   }
 
   setFullTextStatus(docId, status) {
@@ -45,13 +53,15 @@ export class Conversation {
     const fullText = this.fullTexts.get(d.id);
     const retrieval = fullTextContext(d.id, fullText);
     if (retrieval) lines.push(retrieval);
+    const annotationState = this.annotationStates.get(d.id);
+    if (annotationState) lines.push(`[用户批注] ${annotationState.count} 条批注，${annotationState.comments} 条评论；版本 ${annotationState.version || '未同步'}。用户问及标注或自己的想法时，使用 ${d.itemKey ? 'research_annotations(itemKey)' : 'list_annotations(docId)'} 读取原文与评论。${annotationState.error ? '当前为缓存，Zotero 暂不可用。' : ''}`);
     if (sel?.kind === 'text') lines.push(`用户选中了第 ${sel.page} 页的这段文字：「${clip(sel.text)}」`);
     if (sel?.kind === 'region') lines.push(`用户框选了第 ${sel.page} 页的一块区域（多为公式或图），位置 [${sel.rect.map(v => Math.round(v)).join(', ')}] pt。`);
     return {
       text: lines.join('\n'),
       structured: {
         document: { id: d.id, title: d.title, itemKey: d.itemKey, attachmentKey: d.attachmentKey, pageCount: d.pageCount },
-        page, visible: [a, b], ...(fullText ? { fullText } : {}),
+        page, visible: [a, b], ...(fullText ? { fullText } : {}), ...(annotationState ? { annotations: annotationState } : {}),
         selection: sel ? (sel.kind === 'text' ? { kind: 'text', page: sel.page, text: clip(sel.text) } : { kind: 'region', page: sel.page, rect: sel.rect }) : null,
       },
     };
@@ -84,7 +94,7 @@ export class Conversation {
 
   async sync() {
     const { text, structured } = this.context();
-    const signature = text + JSON.stringify((this.contextBlocks?.items || []).map(b => b.id));
+    const signature = text + JSON.stringify((this.contextBlocks?.items || []).map(b => b.id)) + (this.research?.signature() || '');
     if (signature === this.lastContext) return;
     const report = this.reader.doc && !this.elsewhere ? { view: 'paper', ...this.report() }
       : { view: this.note ? 'note' : 'home', note: this.note, docId: null };
@@ -99,13 +109,15 @@ export class Conversation {
       extended: !!this.host.extensions?.modelContext,
       images: !!this.host.app?.getHostCapabilities()?.updateModelContext?.image,
     });
-    const params = { content, structuredContent: { ...structured, contextBlocks: blocks.map(({ image, ...b }) => b) } };
+    if (this.research) content.push(...researchContent(this.research.structured(), !!this.host.extensions?.modelContext));
+    const params = { content, structuredContent: { ...structured, ...(this.research ? {research:this.research.structured()} : {}), contextBlocks: blocks.map(({ image, ...b }) => b) } };
     this.publishQueue = (this.publishQueue || Promise.resolve()).catch(() => {}).then(async () => {
       if (this.host.extensions?.modelContext) {
         if (this.contextBlocks) this.contextBlocks.publishing = true;
+        if (this.research) this.research.publishing = true;
         let result;
         try { result = await this.host.extensions.modelContext.update(params); }
-        finally { this.contextBlocks?.endPublish(result?.updateId); }
+        finally { this.contextBlocks?.endPublish(result?.updateId); this.research?.endPublish(result?.updateId); }
       }
       else if (this.host.app) await this.host.app.updateModelContext(params);
       else window.__sent.push({ kind: 'context', text, content, structured: params.structuredContent });
@@ -148,7 +160,8 @@ export class Conversation {
       const blocks = [...(this.contextBlocks?.items || [])];
       const images = this.host.app?.getHostCapabilities()?.message?.image !== undefined;
       const content = [{ type: 'text', text: `关于${this.source()}（docId ${d.id}，共 ${d.pageCount} 页）：` },
-        ...contextContent('', blocks, { extended: true, images }).slice(1)];
+        ...contextContent('', blocks, { extended: true, images }).slice(1),
+        ...researchContent(this.research?.structured(), true)];
       const result = await this.host.extensions.message.send({ role: 'user', content,
         _meta: { 'openai/message': { target: 'new', send: false } } });
       if (result?.isError) throw new Error('ChatGPT 没有接收新对话草稿。');
