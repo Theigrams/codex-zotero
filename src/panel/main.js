@@ -64,7 +64,6 @@ function hideMessage() {
 // ---------- top bar ----------
 
 function updateBar(page = reader?.currentPage()) {
-  ocr?.updatePage();
   for (const id of ['pageLabel', 'zoomLabel']) $(id).hidden = !doc || home.isOpen;
   $('layoutButton').hidden = !doc || home.isOpen;
   $('ocrButton').hidden = !doc || home.isOpen;
@@ -778,7 +777,7 @@ async function main() {
   conversation.contextBlocks = contexts;
   blocks = new Blocks({ reader, selection, call: host.call, enabled: () => prefs.layoutEnabled !== false,
     onNote: analysisNotice, onAdd: () => contexts.add() });
-  ocr = new OcrPanel({ reader, call: host.call, onError: analysisNotice, onChanged: () => {
+  ocr = new OcrPanel({ reader, call: host.call, onError: analysisNotice, onStatus: (id, status) => conversation.setFullTextStatus(id, status), onChanged: () => {
     blocks.reset(); blocks.prefetch(range(...reader.range(0))); selection.texts.clear(); conversation.schedule();
   } });
   find = new Find({ reader, selection });

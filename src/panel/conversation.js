@@ -3,6 +3,7 @@
 // original-image crop (sendMessage). In the browser preflight both are recorded on window.__sent instead.
 
 import { contextContent } from '../shared/context-blocks.mjs';
+import { fullTextDescriptor, fullTextContext } from '../shared/full-text.mjs';
 
 const MAX_QUOTE = 1500;      // characters of selected text put into the context or a question
 const CONTEXT_DELAY_MS = 600;
@@ -16,7 +17,15 @@ export class Conversation {
     this.lastContext = '';
     this.elsewhere = null; // what the panel shows when it isn't a paper (a note, the home page)
     this.note = null;      // { key, title } of the note on screen, if any
+    this.fullTexts = new Map();
     window.__sent = [];
+  }
+
+  setFullTextStatus(docId, status) {
+    const value = fullTextDescriptor(status);
+    if (JSON.stringify(this.fullTexts.get(docId)) === JSON.stringify(value)) return;
+    this.fullTexts.set(docId, value);
+    this.schedule();
   }
 
   source() {
@@ -33,13 +42,16 @@ export class Conversation {
     const [a, b] = this.reader.range(0);
     const sel = this.selection.current;
     const lines = [`[Zotero 阅读器] 用户正在读${this.source()}，第 ${page} / ${d.pageCount} 页（屏幕上是第 ${a}${b > a ? `–${b}` : ''} 页）。`];
+    const fullText = this.fullTexts.get(d.id);
+    const retrieval = fullTextContext(d.id, fullText);
+    if (retrieval) lines.push(retrieval);
     if (sel?.kind === 'text') lines.push(`用户选中了第 ${sel.page} 页的这段文字：「${clip(sel.text)}」`);
     if (sel?.kind === 'region') lines.push(`用户框选了第 ${sel.page} 页的一块区域（多为公式或图），位置 [${sel.rect.map(v => Math.round(v)).join(', ')}] pt。`);
     return {
       text: lines.join('\n'),
       structured: {
         document: { id: d.id, title: d.title, itemKey: d.itemKey, attachmentKey: d.attachmentKey, pageCount: d.pageCount },
-        page, visible: [a, b],
+        page, visible: [a, b], ...(fullText ? { fullText } : {}),
         selection: sel ? (sel.kind === 'text' ? { kind: 'text', page: sel.page, text: clip(sel.text) } : { kind: 'region', page: sel.page, rect: sel.rect }) : null,
       },
     };
@@ -114,6 +126,9 @@ export class Conversation {
       ? `> 选段：${this.source()}第 ${sel.page} 页\n> 「${clip(sel.text)}」\n（附原文截图；公式与符号以截图为准）`
       : `> 框选：${this.source()}第 ${sel.page} 页的一块区域（见截图）${sel.text ? `\n> ${clip(sel.text)}` : ''}`;
     const text = `${question.trim() || '请解释这段内容。'}\n\n${quote}`;
+    // Keep retrieval policy in background context, not in the user's visible question.
+    await this.sync();
+    await this.publishQueue;
     // The server keeps this selection, so the answer can be saved on it after the user clicked elsewhere.
     this.host.call('panel_report', { view: 'paper', ...this.report(), asked: this.report().selection }).catch(() => {});
     const canImage = !this.host.app || this.host.app.getHostCapabilities()?.message?.image !== undefined;

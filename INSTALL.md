@@ -42,7 +42,7 @@ npm run setup-analysis       # 本机版面检测和文字提取环境，无云�
 npm run configure-mineru     # 可选：交互式配置 MinerU key，不回显
 ```
 
-「版面」默认开启；没有本地模型时退回 PDF 原生块并提示。高精度 OCR 只在用户点击时启动。详见 [版面与 OCR](docs/LAYOUT_OCR.md)。
+「版面」默认开启；没有本地模型时退回 PDF 原生块并提示。高精度 OCR 识别整篇，只在用户明确要求或开启该论文的「允许模型按需识别」后启动。详见 [版面与 OCR](docs/LAYOUT_OCR.md)。
 
 ## 3. 安装插件
 

@@ -37,7 +37,7 @@ export class Paper {
     const hits = [];
     for (let k = 1; k <= doc.pageCount && hits.length < limit; k++) {
       const page = await this.page(doc, k);
-      if (page.fullText) {
+      if (page.fullText !== undefined) {
         const text = page.fullText.toLowerCase(), needle = query.toLowerCase();
         for (let at = text.indexOf(needle); needle && at >= 0 && hits.length < limit; at = text.indexOf(needle, at + needle.length)) {
           hits.push({ page: k, label: doc.pages[k - 1].label, snippet: page.fullText.slice(Math.max(0, at-70), at+needle.length+70), source: 'ocr' });

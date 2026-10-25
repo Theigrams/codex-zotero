@@ -369,19 +369,36 @@ export function modelTools(ctx) {
     },
 
     page_layout: {
-      description: 'Read local layout blocks (paragraphs, formulas, tables, figures) for one page, without cloud OCR.',
+      description: 'Read page blocks (paragraphs, formulas, tables, figures). Uses complete cached MinerU geometry/text when available, otherwise local detection. Never starts OCR.',
       schema: { ...docArg, page: z.number().int().min(1) },
       async run({ docId, page }) { const doc = await ctx.activeDoc(docId); const data = await ctx.analysis.layout(doc, page); return { data, text: JSON.stringify(data) }; },
     },
     ocr_status: {
-      description: 'Read explicit OCR task status and cached pages. Does not upload or start OCR.',
+      description: 'Read whole-document OCR progress, full-text version/availability and per-paper context/OCR preferences. Does not upload or start OCR.',
       schema: docArg,
       async run({ docId }) { const data = await ctx.analysis.status(await ctx.activeDoc(docId)); return { data, text: JSON.stringify(data) }; },
     },
     ocr_start: {
-      description: 'ONLY on an explicit user request: upload the selected page or entire PDF to MinerU for high-accuracy OCR. Runs in the background; use ocr_status to check. Default reading and layout are local.',
-      schema: { ...docArg, scope: z.enum(['page', 'document']), page: z.number().int().min(1).default(1) },
-      async run({ docId, scope, page }) { const data = await ctx.analysis.start(await ctx.activeDoc(docId), { scope, page }); return { data, text: 'OCR 已启动；完成前继续使用 PDF 原文。' }; },
+      description: 'Start whole-document MinerU OCR in the background. Reuses an existing complete result or active job; never re-uploads those. With userRequested=false, allowed only when the user enabled allowModelOcr for this paper. Set userRequested=true only for an explicit user request to recognize/upload this paper. Use ocr_status for progress, paper_full_text after completion. Do not start OCR merely to satisfy first-question context mode.',
+      schema: { ...docArg, userRequested: z.boolean().default(false).describe('True only for an explicit request from the user to OCR this paper.') },
+      async run({ docId, userRequested = false }) {
+        const doc = await ctx.activeDoc(docId);
+        const status = await ctx.analysis.status(doc);
+        const active = status.job && !['done', 'failed', 'cancelled'].includes(status.job.state);
+        if (!status.complete && !active && !userRequested && !status.settings.allowModelOcr) {
+          return { data: { ...status, blocked: true }, text: '尚未允许模型按需识别这篇论文。继续用本机文字，或由用户在 OCR 面板开启“允许模型按需识别”。没有上传文件。' };
+        }
+        const data = await ctx.analysis.start(doc);
+        return { data, text: data.complete ? '完整 MinerU 结果已缓存，无需重复识别。用 paper_full_text 按需读取。' : '整篇 OCR 任务运行中；用 ocr_status 查询，完成后用 paper_full_text 读取。' };
+      },
+    },
+    paper_full_text: {
+      description: 'Read cached complete MinerU full text into this conversation, with original PDF page numbers. Never starts OCR. Read a document/version only once per conversation; reuse that tool result on later turns. If this version is ALREADY fully present in your current conversation, skip the call or pass knownVersion to return metadata only. For long papers follow nextOffset with the returned version until null; only then is that version fully read. No cross-conversation deduplication. After context loss, omit knownVersion to retrieve again. If unavailable use read_pages or explicitly permitted ocr_start.',
+      schema: { ...docArg, knownVersion: z.string().optional().describe('Version already fully read in THIS conversation; suppresses duplicate body.'), version: z.string().optional().describe('Expected version for pagination; stops mixing revisions.'), offset: z.number().int().min(0).default(0), maxChars: z.number().int().min(1).max(60000).default(40000) },
+      async run({ docId, ...options }) {
+        const { text, ...data } = await ctx.analysis.fullText(await ctx.activeDoc(docId), options);
+        return { data, text };
+      },
     },
     search_library: {
       description: 'Search the Zotero library by title, author and year. Returns item keys to open with reader_open.',

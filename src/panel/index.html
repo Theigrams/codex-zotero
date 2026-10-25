@@ -283,7 +283,7 @@
   #ocrPanel header { display:flex; align-items:center; justify-content:space-between; font-weight:600; }
   #ocrPanel p { color:var(--muted); font-size:12px; margin:10px 0; }
   #ocrPanel .ocr-actions { display:flex; gap:6px; flex-wrap:wrap; }
-  #ocrPanel button:not(#ocrClose), #ocrSource { padding:5px 8px; border:1px solid var(--line); border-radius:4px; background:var(--bg); color:var(--text); font:inherit; }
+  #ocrPanel button:not(#ocrClose), #ocrContextMode { padding:5px 8px; border:1px solid var(--line); border-radius:4px; background:var(--bg); color:var(--text); font:inherit; }
   #ocrPanel button:disabled { opacity:.5; cursor:default; }
   #ocrPanel label { display:flex; justify-content:space-between; align-items:center; gap:8px; margin-top:12px; }
   #ocrStatus { display:block; margin-top:12px; font-size:12px; }
@@ -315,7 +315,7 @@
     </svg>
   </button>
   <button id="layoutButton" title="点击整块选择；按住 ⇧ 点击直接加入上下文" aria-pressed="true">版面</button>
-  <button id="ocrButton" title="高精度识别：仅在手动启动时上传" aria-expanded="false" aria-controls="ocrPanel"><span id="ocrBadge">OCR…</span></button>
+  <button id="ocrButton" title="整篇识别与全文上下文" aria-expanded="false" aria-controls="ocrPanel"><span id="ocrBadge">OCR…</span></button>
   <button id="settingsButton" class="icon" title="设置（⌘,）" aria-label="设置">
     <svg width="14" height="14" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.4" aria-hidden="true">
       <path d="M2 4h12M2 12h12"/><circle cx="6" cy="4" r="1.6" fill="var(--bg)"/><circle cx="10.5" cy="12" r="1.6" fill="var(--bg)"/>
@@ -376,12 +376,15 @@
 <div id="analysisNotice" role="status" hidden></div>
 <section id="ocrPanel" aria-label="高精度 OCR" hidden>
   <header><span>高精度识别</span><button id="ocrClose" aria-label="关闭识别面板">×</button></header>
-  <p>将选定页面上传至 MinerU，识别公式、表格和扫描文字。不会自动启动。</p>
-  <div class="ocr-actions"><button id="ocrPage">识别本页</button><button id="ocrDocument">识别整篇</button><button id="ocrCancel" hidden>取消任务</button></div>
+  <p>整篇上传至 MinerU，识别文字、公式、表格和版面。完成后自动使用结果。</p>
+  <div class="ocr-actions"><button id="ocrDocument">识别整篇</button><button id="ocrCancel" hidden>取消任务</button></div>
   <span id="ocrStatus" role="status" aria-live="polite"></span>
-  <p id="ocrConfig" hidden>请在终端运行 npm run configure-mineru 配置服务。</p>
-  <label for="ocrSource">块文字与全文读取<select id="ocrSource"><option value="original">PDF 原文</option><option value="ocr">OCR 结果优先</option></select></label>
+  <p id="ocrConfig" hidden>尚未配置 MinerU，请先完成插件的识别服务设置。</p>
   <p id="ocrCached"></p>
+  <label for="ocrContextMode">全文上下文<select id="ocrContextMode"><option value="on-demand">模型按需读取</option><option value="first-question">首次提问读取</option></select></label>
+  <p id="ocrContextHint">有完整结果时，模型按问题需要读取；连续对话复用已读版本。</p>
+  <label for="ocrAllowModel">允许模型按需识别<input id="ocrAllowModel" type="checkbox"></label>
+  <p>仅对此论文生效。开启后，模型可将整篇上传至 MinerU；打开论文不会自动上传。</p>
 </section>
 <div id="contextTray" aria-label="已加入的上下文" hidden><span id="contextCount">上下文</span><ul id="contextList"></ul><button id="contextClear">清空</button></div>
 <div id="toolbar" hidden>

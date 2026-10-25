@@ -11,12 +11,12 @@ import puppeteer from 'puppeteer-core';
 const pdf = process.argv[process.argv.indexOf('--pdf')+1];
 if (!process.argv.includes('--pdf')) throw new Error('Pass --pdf FILE');
 const root = await mkdtemp(join(tmpdir(),'zotero-analysis-e2e-'));
-let base, submits=0, uploads=0, downloads=0, releaseDownload;
+let base, submits=0, uploads=0, downloads=0, releaseDownload, pageCount=1;
 const cloud=createServer(async(req,res)=>{
  if(req.url==='/api/v4/file-urls/batch'){submits++;let body='';for await(const c of req)body+=c;const data=JSON.parse(body);assert.equal(data.files[0].is_ocr,true);res.setHeader('Content-Type','application/json');res.end(JSON.stringify({code:0,data:{batch_id:'test',file_urls:[base+'/upload']}}));}
  else if(req.url==='/upload'){for await(const c of req){}uploads++;res.end();}
  else if(req.url==='/api/v4/extract-results/batch/test'){res.setHeader('Content-Type','application/json');res.end(JSON.stringify({code:0,data:{extract_result:[{state:'done',full_zip_url:base+'/result.zip'}]}}));}
- else if(req.url==='/result.zip'){const send=()=>res.end(zipSync({'test_content_list.json':strToU8(JSON.stringify([{type:'text',text:'Verified OCR result',bbox:[0,0,900,900],page_idx:0}]))}));if(++downloads===1)releaseDownload=send;else send();}
+ else if(req.url==='/result.zip'){const send=()=>res.end(zipSync({'test_content_list.json':strToU8(JSON.stringify(Array.from({length:pageCount},(_,i)=>({type:'text',text:`Verified OCR result page ${i+1}`,bbox:[0,0,900,900],page_idx:i}))))}));if(++downloads===1)releaseDownload=send;else send();}
  else{res.statusCode=404;res.end();}
 });
 await new Promise(r=>cloud.listen(0,'127.0.0.1',r));base=`http://127.0.0.1:${cloud.address().port}`;
@@ -41,24 +41,39 @@ try {
  assert.deepEqual(context.content[0].annotations.audience,['assistant']);
  if(process.argv.includes('--screenshot')) await host.screenshot({path:process.argv[process.argv.indexOf('--screenshot')+1]});
  await host.evaluate(()=>window.__clearModelContext());await frame.waitForFunction(()=>window.__contexts.items.length===0);
- await frame.click('#ocrButton');await frame.waitForFunction(()=>!document.getElementById('ocrPage').disabled);
- await frame.click('#ocrPage');
+ pageCount=await frame.evaluate(()=>window.__reader.doc.pageCount);
+ const model=async(name,args={})=>(await fetch(url.replace('/panel','/api/model'),{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({name,arguments:args})})).json();
+ assert.equal((await model('ocr_start')).data.blocked,true);assert.equal(submits,0);
+ await frame.click('#ocrButton');await frame.waitForFunction(()=>!document.getElementById('ocrDocument').disabled);
+ assert.equal(await frame.$('#ocrPage'),null);assert.equal(await frame.$('#ocrSource'),null);
+ await frame.select('#ocrContextMode','first-question');
+ await host.waitForFunction(()=>window.__modelContexts.at(-1)?.structuredContent?.fullText?.contextMode==='first-question');
+ assert.equal((await model('ocr_start')).data.blocked,true,'context choice does not authorize uploads');
+ await frame.click('#ocrDocument');
  await frame.waitForFunction(()=>document.getElementById('ocrStatus').textContent.includes('正在下载识别结果'),{timeout:10000});
- assert.equal(await frame.$eval('#ocrSource',el=>el.options[1].disabled),true,'no OCR source before local results exist');
- assert.equal(await frame.$eval('#ocrPage',el=>el.disabled),true,'download still counts as busy');
+ assert.equal(await frame.$eval('#ocrDocument',el=>el.disabled),true,'download still counts as busy');
+ assert.equal((await model('paper_full_text')).data.status,'unavailable');
  releaseDownload();
  await frame.waitForFunction(()=>document.getElementById('ocrStatus').textContent.includes('识别完成'),{timeout:15000});
  assert.equal(submits,1);assert.equal(uploads,1);
- assert.equal(await frame.$eval('#ocrSource',el=>el.value),'ocr');
- assert.equal(await frame.$eval('#ocrSource',el=>el.options[1].disabled),false,'OCR source enabled when completion is displayed');
- await frame.select('#ocrSource','original');await frame.waitForFunction(()=>document.getElementById('ocrBadge').textContent==='OCR…');
- await frame.select('#ocrSource','ocr');await frame.waitForFunction(()=>document.getElementById('ocrBadge').textContent==='OCR');
- await frame.click('#ocrDocument');await frame.waitForFunction(()=>!document.getElementById('ocrPage').disabled,{timeout:15000});
- assert.equal(submits,2);
+ await frame.waitForFunction(()=>[...window.__blocks.pages.values()].some(v=>v?.engine==='mineru'));
+ assert.match(await frame.$eval('#ocrCached',el=>el.textContent),/自动使用/);
+ await host.waitForFunction(()=>window.__modelContexts.at(-1)?.structuredContent?.fullText?.available===true);
+ const pointer=await host.evaluate(()=>window.__modelContexts.at(-1));
+ assert.ok(pointer.content[0].text.includes('paper_full_text'));
+ assert.equal(JSON.stringify(pointer).includes('Verified OCR result'),false,'full text never lives in the repeating context');
+ const first=await model('paper_full_text');assert.equal(first.data.status,'ready');assert.ok(first.text.includes(`Verified OCR result page ${pageCount}`));
+ const repeat=await model('paper_full_text',{knownVersion:first.data.version});assert.equal(repeat.data.status,'unchanged');assert.ok(!repeat.text.includes('Verified OCR result'));
+ assert.equal((await model('paper_full_text')).data.status,'ready','fresh conversation can still retrieve');
+ await model('ocr_start');assert.equal(submits,1,'complete result prevents a second cloud job');
+ await frame.click('#ocrAllowModel');await frame.waitForFunction(()=>window.__ocr.status.settings.allowModelOcr===true);
+ await frame.click('#ocrDocument');await frame.waitForFunction(()=>!document.getElementById('ocrDocument').disabled,{timeout:15000});
+ assert.equal(submits,2,'only explicit re-recognition forces another job');
+ if(process.argv.includes('--screenshot')) await host.screenshot({path:process.argv[process.argv.indexOf('--screenshot')+1]});
  await frame.click('#ocrClose');await frame.click('#layoutButton');await frame.waitForFunction(()=>document.getElementById('layoutButton').getAttribute('aria-pressed')==='false');
  await frame.click('#layoutButton');await frame.waitForFunction(()=>document.getElementById('layoutButton').getAttribute('aria-pressed')==='true');
  // A narrow panel still exposes the controls and keeps context text in its own scroller.
  await host.setViewport({width:420,height:740});
  assert.equal(await frame.evaluate(()=>document.documentElement.scrollWidth<=window.innerWidth),true);
- console.log(JSON.stringify({pass:true,layout:result,checks:['no automatic cloud request','local model','block context thumbnail/group','host removal synchronization','download completion waits for usable local results','single-page OCR','whole-document OCR','source switch','layout toggle','narrow panel'],cloudRequests:submits}));
+ console.log(JSON.stringify({pass:true,layout:result,checks:['no automatic cloud request','local model','block context thumbnail/group','host removal synchronization','download completion waits for usable local results','single-page/source controls removed','whole-document atomic source','compact first-question policy','full text retrieval and version deduplication','per-paper model OCR permission','layout toggle','narrow panel'],cloudRequests:submits}));
 }finally{await browser?.close();server.kill();await new Promise(r=>cloud.close(r));await rm(root,{recursive:true,force:true});}

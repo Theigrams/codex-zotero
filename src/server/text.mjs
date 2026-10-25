@@ -92,7 +92,7 @@ export class TextService {
     }
     const native = await this.inflight.get(key);
     const fullText = await this.ocrText?.(doc, page);
-    return fullText ? { ...native, fullText, textSource: 'ocr' } : { ...native, textSource: 'original' };
+    return fullText !== undefined ? { ...native, fullText, textSource: 'ocr' } : { ...native, textSource: 'original' };
   }
 
   close() {

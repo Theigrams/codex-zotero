@@ -174,9 +174,9 @@ async function outlineX(doc, page, y, kind) {
 const appTools = {
   async layout_page({ docId, page }) { return analysis.layout(documents.get(docId), page); },
   async ocr_job_status({ docId }) { return analysis.status(documents.get(docId)); },
-  async ocr_job_start({ docId, scope, page }) { return analysis.start(documents.get(docId), { scope, page }); },
+  async ocr_job_start({ docId, force }) { return analysis.start(documents.get(docId), { force }); },
   async ocr_job_cancel({ docId }) { return analysis.cancel(documents.get(docId)); },
-  async ocr_text_source({ docId, source }) { return analysis.setSource(documents.get(docId), source); },
+  async ocr_settings({ docId, ...patch }) { return analysis.setSettings(documents.get(docId), patch); },
   async panel_hello({ instance }) {
     activeInstance = instance;
     lastPoll = Date.now();
@@ -329,9 +329,9 @@ const selectionSchema = z.object({
 const appSchemas = {
   layout_page: { docId: z.string(), page: z.number().int().min(1) },
   ocr_job_status: { docId: z.string() },
-  ocr_job_start: { docId: z.string(), scope: z.enum(['page', 'document']), page: z.number().int().min(1) },
+  ocr_job_start: { docId: z.string(), force: z.boolean().optional() },
   ocr_job_cancel: { docId: z.string() },
-  ocr_text_source: { docId: z.string(), source: z.enum(['original', 'ocr']) },
+  ocr_settings: { docId: z.string(), contextMode: z.enum(['on-demand', 'first-question']).optional(), allowModelOcr: z.boolean().optional() },
   panel_hello: { instance: z.string().max(40) },
   panel_poll: { instance: z.string().max(40), seen: z.number().int().min(0).optional() },
   tab_open: { docId: z.string().optional(), itemKey: z.string().regex(/^[A-Z0-9]{8}$/).optional() },
