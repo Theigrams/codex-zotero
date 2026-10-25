@@ -2,6 +2,9 @@
 // The reading surface is reader.js; selections are selection.js; what goes to Codex is conversation.js;
 // Zotero annotations are annotations.js (layer), popup.js (one annotation) and drawer.js (the list);
 // find.js is ⌘F and home.js the search + "being read" page.
+import { Blocks } from './blocks.js';
+import { ContextBlocks } from './contexts.js';
+import { OcrPanel } from './ocr.js';
 import { DEFAULT_PALETTE } from '../shared/annotations.mjs';
 import { actionFor, comboOf, keymap } from '../shared/keys.mjs';
 import { targetBlock } from '../shared/text.mjs';
@@ -34,6 +37,9 @@ let find = null;
 let home = null;
 let links = null;
 let settings = null;
+let blocks = null;
+let contexts = null;
+let ocr = null;
 let doc = null;
 let noteReturn = null; // { id, title } of the note a link led here from (↩ goes back to it)
 let noteTab = null; // the Zotero note shown in the active tab, when it is a note tab
@@ -58,7 +64,11 @@ function hideMessage() {
 // ---------- top bar ----------
 
 function updateBar(page = reader?.currentPage()) {
+  ocr?.updatePage();
   for (const id of ['pageLabel', 'zoomLabel']) $(id).hidden = !doc || home.isOpen;
+  $('layoutButton').hidden = !doc || home.isOpen;
+  $('ocrButton').hidden = !doc || home.isOpen;
+  $('layoutButton').setAttribute('aria-pressed', String(prefs.layoutEnabled !== false));
   $('annButton').hidden = !(doc || noteTab) || home.isOpen;
   $('annButton').title = noteTab ? '目录（A）' : '批注（A）';
   const back = links?.backPage;
@@ -144,6 +154,7 @@ function showTab(active) {
 
 // Leaves the paper on screen (if any) so a note, home or another paper can take the panel.
 function leavePaper() {
+  blocks?.reset(); ocr?.reset();
   savePosition();
   annotations.stop();
   popup.close();
@@ -276,6 +287,7 @@ function goBack() {
 }
 
 function showDoc(active) {
+  blocks?.reset(); ocr?.reset();
   noteReturn = null; // a note link sets it again right after
   hideNote();
   home.hide();
@@ -292,6 +304,8 @@ function showDoc(active) {
   annotations.load(doc);
   selection.prefetch(range(...reader.range(0)));
   links.prefetch(range(...reader.range(0)));
+  blocks?.prefetch(range(...reader.range(0)));
+  ocr?.refresh();
   conversation.schedule();
   renderTabs();
   updateBar();
@@ -300,6 +314,7 @@ function showDoc(active) {
 }
 
 function showHome() {
+  ocr?.close();
   savePosition();
   popup.close();
   find.reset();
@@ -390,6 +405,7 @@ function flashRects(k, rects) {
 // ---------- settings ----------
 
 function openSettings() {
+  ocr?.close();
   drawer?.close();
   closeToc();
   settings.open();
@@ -411,6 +427,9 @@ function applyPrefs(next) {
   prefs = next;
   keys = keymap(prefs.keys);
   if (prefs.renderMode !== mode) reader?.setMode(prefs.renderMode);
+  blocks?.outline(null);
+  blocks?.prefetch(range(...(reader?.doc ? reader.range(0) : [1, 0])));
+  updateBar();
   popup?.render();
   drawer?.render();
 }
@@ -441,6 +460,7 @@ function placeToolbar() {
 }
 
 function openAsk() {
+  $('addContext').hidden = true;
   $('ask').hidden = true;
   $('highlight').hidden = true;
   $('comment').hidden = true;
@@ -453,6 +473,7 @@ function openAsk() {
 
 function closeAsk() {
   $('askInput').hidden = true;
+  $('addContext').hidden = false;
   $('ask').hidden = false;
   $('highlight').hidden = false;
   $('comment').hidden = false;
@@ -516,7 +537,7 @@ function jumpTo(a) {
 }
 
 async function copySelection() {
-  const text = selection?.current?.kind === 'text' ? selection.current.text : '';
+  const text = selection?.current?.text || '';
   if (!text) return;
   try {
     await navigator.clipboard.writeText(text);
@@ -609,6 +630,7 @@ function onKey(e) {
     else if (!$('tocDrawer').hidden) closeToc();
     else if (find.isOpen) find.close();
     else if (popup.isOpen) popup.close();
+    else if (!$('ocrPanel').hidden) ocr.close();
     else if (settings.isOpen) closeSettings();
     else if (drawer.isOpen) drawer.close();
     else selection?.clear();
@@ -707,6 +729,7 @@ async function main() {
     onPage: page => {
       updateBar(page);
       conversation.schedule();
+      blocks?.prefetch([page]);
     },
     onPageCreated: k => {
       annotations?.draw(k);
@@ -719,6 +742,7 @@ async function main() {
       updateBar();
       selection.prefetch(range(...reader.range(0)));
       links.prefetch(range(...reader.range(0)));
+      blocks?.prefetch(range(...reader.range(0)));
       host.call('position_save', { docId: doc.id, ...position }).catch(() => {});
     },
   });
@@ -734,7 +758,7 @@ async function main() {
   home = new Home({ call: host.call, onOpen: openTab, onLeave: leaveHome });
   selection = new Selection({
     reader, call: host.call, onChange: onSelection,
-    onClick: (k, pt) => {
+    onClick: (k, pt, event) => {
       const link = links.hit(k, pt);
       if (link) {
         popup.close();
@@ -742,10 +766,21 @@ async function main() {
       }
       const a = annotations.hit(k, pt);
       if (a) popup.open(a.key);
-      else popup.close();
+      else { popup.close(); blocks?.select(k, pt, event); }
     },
   });
   conversation = new Conversation({ host, reader, selection });
+  const analysisNotice = message => {
+    $('analysisNotice').textContent = message; $('analysisNotice').hidden = false;
+    clearTimeout(analysisNotice.timer); analysisNotice.timer = setTimeout(() => { $('analysisNotice').hidden = true; }, 5000);
+  };
+  contexts = new ContextBlocks({ host, reader, selection, onChange: () => conversation.schedule(), onNote: analysisNotice });
+  conversation.contextBlocks = contexts;
+  blocks = new Blocks({ reader, selection, call: host.call, enabled: () => prefs.layoutEnabled !== false,
+    onNote: analysisNotice, onAdd: () => contexts.add() });
+  ocr = new OcrPanel({ reader, call: host.call, onError: analysisNotice, onChanged: () => {
+    blocks.reset(); blocks.prefetch(range(...reader.range(0))); selection.texts.clear(); conversation.schedule();
+  } });
   find = new Find({ reader, selection });
   links = new Links({
     reader, call: host.call, pointAt: (e, el, k) => selection.pointAt(e, el, k), textFor: k => selection.textFor(k), onMove: () => updateBar(),
@@ -759,6 +794,14 @@ async function main() {
   $('scroller').addEventListener('scroll', () => requestAnimationFrame(() => { placeToolbar(); popup.place(); }), { passive: true });
   // The toolbar must not take the click as a "click on the page", which would clear the selection.
   $('toolbar').addEventListener('mousedown', e => { if (e.target.id !== 'askInput') e.preventDefault(); e.stopPropagation(); });
+  $('addContext').addEventListener('click', () => contexts.add());
+  $('layoutButton').addEventListener('click', async () => {
+    try { applyPrefs((await host.call('prefs_set', { layoutEnabled: prefs.layoutEnabled === false })).prefs); } catch(e) { analysisNotice(e.message); }
+  });
+  $('ocrButton').addEventListener('click', () => {
+    if ($('ocrPanel').hidden) { closeSettings(); ocr.open(); } else ocr.close();
+    $('ocrButton').setAttribute('aria-expanded', String(!$('ocrPanel').hidden));
+  });
   $('ask').addEventListener('click', openAsk);
   $('comment').addEventListener('click', commentSelection);
   $('highlight').addEventListener('click', () => highlightSelection());
@@ -792,6 +835,7 @@ async function main() {
   $('settingsButton').addEventListener('click', toggleSettings);
   $('settingsClose').addEventListener('click', closeSettings);
   $('retry').addEventListener('click', start);
+  window.__blocks = blocks; window.__contexts = contexts; window.__ocr = ocr;
   window.__reader = reader; // for acceptance tests that read metrics from the DOM
   window.__selection = selection;
   window.__annotations = annotations;

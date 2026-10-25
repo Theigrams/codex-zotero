@@ -1,4 +1,5 @@
 // Talks to the server: through the Codex host bridge inside Codex, over HTTP in the browser preflight.
+import { OpenAIExtensions } from '@openai/mcp-extensions/app';
 import { App } from '@modelcontextprotocol/ext-apps';
 
 // ext-apps' PostMessageTransport console.debug()s every message it receives. Each strip response carries
@@ -9,10 +10,11 @@ console.debug = () => {};
 export async function connect() {
   if (window.parent !== window) {
     const app = new App({ name: 'codex-zotero', version: '0.1.0' }, {}, { autoResize: false });
+    const extensions = new OpenAIExtensions(app);
     try {
       await app.connect(undefined, { timeout: 10000 });
       return {
-        app,
+        app, extensions,
         mode: 'host',
         async call(name, args = {}) {
           const r = await app.callServerTool({ name, arguments: args });

@@ -1,0 +1,6 @@
+# Local layout only; no OCR engine or VLM is installed.
+pymupdf>=1.26.5,<1.28
+fonttools>=4.60,<5
+numpy>=1.26,<3
+Pillow>=11,<13
+onnxruntime>=1.19,<2

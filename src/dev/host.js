@@ -9,6 +9,7 @@ console.debug = () => {};
 const frame = document.querySelector('iframe');
 const bridge = new AppBridge(null, { name: 'codex-zotero preflight host', version: '0.1.0' }, {
   serverTools: {}, serverResources: {}, message: { text: {}, image: {} },
+  experimental: { 'openai/modelContext': {}, 'openai/message': {} },
   updateModelContext: { text: {}, image: {}, structuredContent: {} }, logging: {},
 }, { hostContext: { displayMode: 'fullscreen', platform: 'desktop', theme: 'light', locale: 'zh-CN' } });
 
@@ -20,7 +21,14 @@ bridge.oncalltool = async params => {
   return { content: [{ type: 'text', text: 'ok' }], structuredContent: await r.json() };
 };
 bridge.onmessage = async () => ({});
-bridge.onupdatemodelcontext = async () => ({});
+window.__modelContexts = [];
+bridge.onupdatemodelcontext = async params => {
+  const updateId = `context-${window.__modelContexts.length + 1}`;
+  window.__modelContexts.push(params);
+  bridge.setHostContext({ displayMode: 'fullscreen', platform: 'desktop', theme: 'light', locale: 'zh-CN', 'openai/modelContext': { updateId, ...params } });
+  return { _meta: { 'openai/modelContext': { updateId } } };
+};
+window.__clearModelContext = () => bridge.sendHostContextChange({ 'openai/modelContext': null });
 
 await bridge.connect(new PostMessageTransport(frame.contentWindow, frame.contentWindow));
 frame.src = '/panel';

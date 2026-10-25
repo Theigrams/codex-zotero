@@ -11,6 +11,9 @@ import { homedir } from 'node:os';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { RENDER_MODES } from '../shared/layout.mjs';
+import { DocumentAnalysis } from './analysis.mjs';
+import { DocumentWorker } from './document-worker.mjs';
+import { MinerU } from './mineru.mjs';
 import { Annotations } from './annotations.mjs';
 import { Documents, summary } from './documents.mjs';
 import { HelperPool } from './helpers.mjs';
@@ -49,6 +52,12 @@ const text = new TextService({
   python: process.env.CODEX_ZOTERO_PYTHON || '',
 });
 
+const analysis = new DocumentAnalysis({
+  worker: new DocumentWorker({ python: process.env.CODEX_ZOTERO_PYTHON || '', script: join(here, 'document_worker.py'),
+    model: process.env.CODEX_ZOTERO_LAYOUT_MODEL || join(homedir(), '.cache', 'codex-zotero', 'models', 'pp-doclayout-v2.onnx') }),
+  mineru: new MinerU({ api: process.env.CODEX_ZOTERO_MINERU_API || undefined, secretFile: join(stateRoot, 'mineru-secret.json') }),
+});
+text.ocrText = (doc, page) => analysis.pageText(doc, page);
 const paper = new Paper(text);
 const maps = new PaperMaps({ writer: annotations.writer, paper, pool, settings: () => state.prefs() });
 const readingNotes = new ReadingNotes({ writer: annotations.writer, paper, pool, settings: () => state.prefs() });
@@ -149,7 +158,8 @@ async function navigate(doc, target) {
   return Date.now() - lastPoll < 5000;
 }
 
-const ctx = { annotations, maps, readingNotes, paper, pool, state, docById, activeDoc, paperTab, tabsView, view: () => view, navigate, searchLibrary, searchAnnotations, live: () => live, asked: () => asked };
+const ctx = {
+  analysis, annotations, maps, readingNotes, paper, pool, state, docById, activeDoc, paperTab, tabsView, view: () => view, navigate, searchLibrary, searchAnnotations, live: () => live, asked: () => asked };
 const forModel = modelTools(ctx);
 
 const CAPTION_KIND = { fig: '图', tab: '表', alg: '算法' };
@@ -162,6 +172,11 @@ async function outlineX(doc, page, y, kind) {
 }
 
 const appTools = {
+  async layout_page({ docId, page }) { return analysis.layout(documents.get(docId), page); },
+  async ocr_job_status({ docId }) { return analysis.status(documents.get(docId)); },
+  async ocr_job_start({ docId, scope, page }) { return analysis.start(documents.get(docId), { scope, page }); },
+  async ocr_job_cancel({ docId }) { return analysis.cancel(documents.get(docId)); },
+  async ocr_text_source({ docId, source }) { return analysis.setSource(documents.get(docId), source); },
   async panel_hello({ instance }) {
     activeInstance = instance;
     lastPoll = Date.now();
@@ -312,6 +327,11 @@ const selectionSchema = z.object({
   rects: z.array(rect).max(200).optional(), rect: rect.optional(), a: z.number().int().optional(),
 });
 const appSchemas = {
+  layout_page: { docId: z.string(), page: z.number().int().min(1) },
+  ocr_job_status: { docId: z.string() },
+  ocr_job_start: { docId: z.string(), scope: z.enum(['page', 'document']), page: z.number().int().min(1) },
+  ocr_job_cancel: { docId: z.string() },
+  ocr_text_source: { docId: z.string(), source: z.enum(['original', 'ocr']) },
   panel_hello: { instance: z.string().max(40) },
   panel_poll: { instance: z.string().max(40), seen: z.number().int().min(0).optional() },
   tab_open: { docId: z.string().optional(), itemKey: z.string().regex(/^[A-Z0-9]{8}$/).optional() },
@@ -338,6 +358,7 @@ const appSchemas = {
   render_preview: { docId: z.string(), page: z.number().int().min(1), crop: z.boolean().optional() },
   position_save: { docId: z.string(), page: z.number().int().min(1), offset: z.number(), zoom: z.number() },
   prefs_set: {
+    layoutEnabled: z.boolean().optional(),
     renderMode: z.enum(RENDER_MODES).optional(),
     palette: z.array(z.object({ color: z.string(), tag: z.string() })).max(9).nullable().optional(),
     keys: z.record(z.string(), z.string().nullable()).optional(),
@@ -368,6 +389,7 @@ async function openReader({ itemKey, attachmentKey } = {}) {
 }
 
 function shutdown() {
+  analysis.close();
   pool.close();
   text.close();
   process.exit(0);
@@ -469,7 +491,7 @@ if (argv.includes('--standalone')) {
   }
 
   for (const [name, tool] of Object.entries(forModel)) {
-    server.registerTool(name, { description: tool.description, inputSchema: tool.schema }, async args => {
+    server.registerTool(name, { description: tool.description, inputSchema: tool.schema, ...(name === 'ocr_start' ? { annotations: { readOnlyHint: false, openWorldHint: true } } : {}) }, async args => {
       try {
         const r = await tool.run(args);
         return ok(r.data ?? {}, r.text);

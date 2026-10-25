@@ -368,6 +368,21 @@ export function modelTools(ctx) {
       },
     },
 
+    page_layout: {
+      description: 'Read local layout blocks (paragraphs, formulas, tables, figures) for one page, without cloud OCR.',
+      schema: { ...docArg, page: z.number().int().min(1) },
+      async run({ docId, page }) { const doc = await ctx.activeDoc(docId); const data = await ctx.analysis.layout(doc, page); return { data, text: JSON.stringify(data) }; },
+    },
+    ocr_status: {
+      description: 'Read explicit OCR task status and cached pages. Does not upload or start OCR.',
+      schema: docArg,
+      async run({ docId }) { const data = await ctx.analysis.status(await ctx.activeDoc(docId)); return { data, text: JSON.stringify(data) }; },
+    },
+    ocr_start: {
+      description: 'ONLY on an explicit user request: upload the selected page or entire PDF to MinerU for high-accuracy OCR. Runs in the background; use ocr_status to check. Default reading and layout are local.',
+      schema: { ...docArg, scope: z.enum(['page', 'document']), page: z.number().int().min(1).default(1) },
+      async run({ docId, scope, page }) { const data = await ctx.analysis.start(await ctx.activeDoc(docId), { scope, page }); return { data, text: 'OCR 已启动；完成前继续使用 PDF 原文。' }; },
+    },
     search_library: {
       description: 'Search the Zotero library by title, author and year. Returns item keys to open with reader_open.',
       schema: { query: z.string().min(1).max(200), limit: z.number().int().min(1).max(30).optional() },

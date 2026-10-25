@@ -2,6 +2,8 @@
 // (updateModelContext — the host keeps only the latest one, spike S11) and questions sent with the
 // original-image crop (sendMessage). In the browser preflight both are recorded on window.__sent instead.
 
+import { contextContent } from '../shared/context-blocks.mjs';
+
 const MAX_QUOTE = 1500;      // characters of selected text put into the context or a question
 const CONTEXT_DELAY_MS = 600;
 
@@ -70,8 +72,9 @@ export class Conversation {
 
   async sync() {
     const { text, structured } = this.context();
-    if (text === this.lastContext) return;
-    this.lastContext = text;
+    const signature = text + JSON.stringify((this.contextBlocks?.items || []).map(b => b.id));
+    if (signature === this.lastContext) return;
+    this.lastContext = signature;
     const report = this.reader.doc && !this.elsewhere ? { view: 'paper', ...this.report() }
       : { view: this.note ? 'note' : 'home', note: this.note, docId: null };
     this.host.call('panel_report', report).catch(() => {});
@@ -79,8 +82,18 @@ export class Conversation {
   }
 
   async publish(text, structured) {
-    if (this.host.app) await this.host.app.updateModelContext({ content: [{ type: 'text', text }], structuredContent: structured });
-    else window.__sent.push({ kind: 'context', text });
+    const blocks = this.contextBlocks?.items || [];
+    const content = contextContent(text, blocks, {
+      extended: !!this.host.extensions?.modelContext,
+      images: !!this.host.app?.getHostCapabilities()?.updateModelContext?.image,
+    });
+    const params = { content, structuredContent: { ...structured, contextBlocks: blocks.map(({ image, ...b }) => b) } };
+    this.publishQueue = (this.publishQueue || Promise.resolve()).catch(() => {}).then(async () => {
+      if (this.host.extensions?.modelContext) await this.host.extensions.modelContext.update(params);
+      else if (this.host.app) await this.host.app.updateModelContext(params);
+      else window.__sent.push({ kind: 'context', text, content, structured: params.structuredContent });
+    });
+    return this.publishQueue;
   }
 
   // Every panel keeps the last context it sent; a panel that a newer one replaced says so, so the model
@@ -99,14 +112,16 @@ export class Conversation {
     const img = await this.host.call('selection_image', { docId: d.id, page: sel.page, rect: this.selection.bounds() });
     const quote = sel.kind === 'text'
       ? `> 选段：${this.source()}第 ${sel.page} 页\n> 「${clip(sel.text)}」\n（附原文截图；公式与符号以截图为准）`
-      : `> 框选：${this.source()}第 ${sel.page} 页的一块区域（见截图）`;
+      : `> 框选：${this.source()}第 ${sel.page} 页的一块区域（见截图）${sel.text ? `\n> ${clip(sel.text)}` : ''}`;
     const text = `${question.trim() || '请解释这段内容。'}\n\n${quote}`;
     // The server keeps this selection, so the answer can be saved on it after the user clicked elsewhere.
     this.host.call('panel_report', { view: 'paper', ...this.report(), asked: this.report().selection }).catch(() => {});
     const canImage = !this.host.app || this.host.app.getHostCapabilities()?.message?.image !== undefined;
     const content = [{ type: 'text', text }, ...(canImage ? [{ type: 'image', data: img.data, mimeType: 'image/png' }] : [])];
     if (this.host.app) {
-      const r = await this.host.app.sendMessage({ role: 'user', content });
+      const r = this.host.extensions?.message
+        ? await this.host.extensions.message.send({ role: 'user', content })
+        : await this.host.app.sendMessage({ role: 'user', content });
       if (r?.isError) throw new Error('Codex 没有接收这条消息。');
     } else {
       window.__sent.push({ kind: 'message', text, image: canImage ? `${img.width}x${img.height}` : null });

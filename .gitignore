@@ -20,3 +20,6 @@ coverage/
 
 # Build output (machine-specific install paths)
 /out/
+
+# Local diagnostics can include library metadata and document previews.
+/diagnostics/

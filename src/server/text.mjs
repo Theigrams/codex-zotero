@@ -90,7 +90,9 @@ export class TextService {
         return packed;
       })().finally(() => this.inflight.delete(key)));
     }
-    return this.inflight.get(key);
+    const native = await this.inflight.get(key);
+    const fullText = await this.ocrText?.(doc, page);
+    return fullText ? { ...native, fullText, textSource: 'ocr' } : { ...native, textSource: 'original' };
   }
 
   close() {
