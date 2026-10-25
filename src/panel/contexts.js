@@ -1,4 +1,14 @@
-import { BLOCK_NAMES, MAX_CONTEXT_BLOCKS, contextTitle } from '../shared/context-blocks.mjs';
+import { MAX_CONTEXT_BLOCKS, contextTitle } from '../shared/context-blocks.mjs';
+
+// Assign an unused color once; keep it with the attachment across redraws/remounts.
+const CONTEXT_COLORS = ['#396ec2', '#8550ad', '#24805b', '#a56813', '#a94b83', '#72832d', '#287d94', '#b54b48'];
+function pinIcon() {
+  const svg = document.createElementNS('http://www.w3.org/2000/svg', 'svg');
+  svg.setAttribute('viewBox', '0 0 16 16'); svg.setAttribute('fill', 'none'); svg.setAttribute('stroke', 'currentColor'); svg.setAttribute('aria-hidden', 'true');
+  const path = document.createElementNS(svg.namespaceURI, 'path');
+  path.setAttribute('d', 'M8 14s5-5 5-8a5 5 0 0 0-10 0c0 3 5 8 5 8Z M10 6a2 2 0 1 1-4 0 2 2 0 0 1 4 0Z');
+  svg.append(path); return svg;
+}
 export class ContextBlocks {
   constructor({ host, reader, selection, onChange, onNote, onNavigate }) {
     Object.assign(this, { host, reader, selection, onChange, onNote, onNavigate });
@@ -12,6 +22,7 @@ export class ContextBlocks {
       }) : [];
     this.nextNumber = Math.max(0, ...this.items.map(b => Number.isSafeInteger(b.contextNumber) && b.contextNumber > 0 ? b.contextNumber : 0)) + 1;
     for (const item of this.items) if (!Number.isSafeInteger(item.contextNumber) || item.contextNumber < 1) item.contextNumber = this.nextNumber++;
+    for (const item of this.items) if (!CONTEXT_COLORS.includes(item.contextColor)) item.contextColor = this.pickColor();
     this.generation = 0;
     this.box = document.getElementById('contextTray');
     this.list = document.getElementById('contextList');
@@ -19,7 +30,7 @@ export class ContextBlocks {
     this.list.onclick = e => {
       const button = e.target.closest('button'), id = button?.dataset.id;
       if (!id) return;
-      if (button.dataset.action === 'remove') { this.items = this.items.filter(b => b.id !== id); this.changed(); }
+      if (button.dataset.action === 'remove') this.remove(id);
       else this.locate(id);
     };
     this.list.addEventListener('mouseover', e => this.emphasize(e.target.closest('li')?.dataset.id));
@@ -36,6 +47,20 @@ export class ContextBlocks {
       if (kept.length !== this.items.length) { this.items = kept; this.changed(); }
     });
     this.render();
+  }
+  pickColor() {
+    const unused = CONTEXT_COLORS.filter(color => !this.items.some(b => b.contextColor === color));
+    const used = this.items.map(b => b.contextColor).filter(color => CONTEXT_COLORS.includes(color));
+    const rgb = color => color.match(/[a-f0-9]{2}/gi).map(v => parseInt(v, 16));
+    const distance = (a, b) => Math.hypot(...rgb(a).map((v, i) => v - rgb(b)[i]));
+    const scored = unused.map(color => ({ color, gap: used.length ? Math.min(...used.map(other => distance(color, other))) : 1 }));
+    // Randomize among well-separated choices so neighboring chips are easy to tell apart.
+    const best = Math.max(...scored.map(v => v.gap));
+    const choices = scored.filter(v => v.gap >= best * 0.8);
+    return choices[Math.floor(Math.random() * choices.length)]?.color || CONTEXT_COLORS[0];
+  }
+  remove(id) {
+    this.items = this.items.filter(b => b.id !== id); this.changed();
   }
   async add() {
     if (this.adding) return;
@@ -54,6 +79,7 @@ export class ContextBlocks {
       if (generation !== this.generation) return;
       if (crop.data.length <= 1024*1024) item.image = crop.data;
       item.contextNumber = this.nextNumber++;
+      item.contextColor = this.pickColor();
       this.items.push(item); this.changed(); this.onNote('已加入上下文');
     } catch (e) { this.onNote(`加入失败：${e.message}`); }
     finally { this.adding = false; }
@@ -101,21 +127,22 @@ export class ContextBlocks {
       const [x,y,w,h] = item.rect;
       const node = document.createElement('div'); node.className = 'context-mark';
       node.dataset.id = item.id; node.dataset.blockType = item.type;
+      node.style.setProperty('--context-color', item.contextColor);
       node.classList.toggle('is-selected', item.id === selected); node.classList.toggle('is-linked', item.id === active);
       Object.assign(node.style, { left: `${(x-rx)/rw*100}%`, top: `${(y-ry)/rh*100}%`, width: `${w/rw*100}%`, height: `${h/rh*100}%` });
+      const actions = document.createElement('div'); actions.className = 'context-pin-actions';
       const pin = document.createElement('button'); pin.className = 'context-pin';
-      const scale = pg.el.clientWidth / rw;
-      if ((rx + rw - x - w) * scale < 40) pin.classList.add((x - rx) * scale >= 40 ? 'pin-left' : 'pin-above');
       pin.title = pin.ariaLabel = `${contextTitle(item)}，定位对应上下文`;
-      const svg = document.createElementNS('http://www.w3.org/2000/svg', 'svg');
-      svg.setAttribute('viewBox','0 0 16 16'); svg.setAttribute('fill','none'); svg.setAttribute('stroke','currentColor'); svg.setAttribute('aria-hidden','true');
-      const path = document.createElementNS(svg.namespaceURI,'path');
-      path.setAttribute('d','M8 14s5-5 5-8a5 5 0 0 0-10 0c0 3 5 8 5 8Z M10 6a2 2 0 1 1-4 0 2 2 0 0 1 4 0Z');
-      svg.append(path); pin.append(svg, document.createTextNode(String(item.contextNumber)));
+      pin.append(pinIcon(), document.createTextNode(String(item.contextNumber)));
       pin.onclick = e => { e.stopPropagation(); this.locate(item.id, true); };
-      pin.onmouseenter = () => this.emphasize(item.id); pin.onmouseleave = () => this.emphasize(null);
-      pin.onfocus = () => this.emphasize(item.id); pin.onblur = () => this.emphasize(null);
-      node.append(pin); pg.overlay.append(node);
+      const remove = document.createElement('button'); remove.className = 'context-pin-remove'; remove.textContent = '×';
+      remove.title = remove.ariaLabel = `移除${contextTitle(item)}`;
+      remove.onclick = e => { e.stopPropagation(); this.remove(item.id); };
+      actions.onmouseenter = () => this.emphasize(item.id); actions.onmouseleave = () => this.emphasize(null);
+      actions.onfocusin = () => this.emphasize(item.id); actions.onfocusout = () => this.emphasize(null);
+      actions.append(pin, remove); node.append(actions); pg.overlay.append(node);
+      const scale = pg.el.clientWidth / rw, space = actions.offsetWidth + 6;
+      if ((rx + rw - x - w) * scale < space) actions.classList.add((x - rx) * scale >= space ? 'pin-left' : 'pin-above');
     }
   }
   render() {
@@ -123,11 +150,13 @@ export class ContextBlocks {
     this.list.replaceChildren();
     for (const item of this.items) {
       const row = document.createElement('li'); row.dataset.id = item.id; row.dataset.blockType = item.type;
+      row.style.setProperty('--context-color', item.contextColor);
       const label = document.createElement('button'); label.className = 'context-jump'; label.dataset.id = item.id;
-      const number = document.createElement('span'); number.className = 'context-number'; number.textContent = `上下文 ${item.contextNumber}`;
-      label.append(number, document.createTextNode(`第 ${item.page} 页 · ${BLOCK_NAMES[item.type] || '选段'}`));
+      const number = document.createElement('span'); number.className = 'context-number'; number.append(pinIcon(), document.createTextNode(String(item.contextNumber)));
+      const page = document.createElement('span'); page.className = 'context-page'; page.textContent = `P${item.page}`;
+      label.append(number, page);
       label.setAttribute('aria-label', `定位${contextTitle(item)}`);
-      label.title = `${item.title}\n${item.text.slice(0, 160)}`;
+      label.title = `${contextTitle(item)}\n${item.title}\n${item.text.slice(0, 160)}`;
       const remove = document.createElement('button'); remove.dataset.id = item.id; remove.dataset.action = 'remove'; remove.textContent = '×';
       remove.setAttribute('aria-label', `移除${contextTitle(item)}`); row.append(label, remove); this.list.append(row);
     }

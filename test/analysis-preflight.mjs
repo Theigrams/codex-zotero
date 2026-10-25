@@ -64,7 +64,7 @@ try {
  assert.ok(context.content[1]._meta['openai/title'].startsWith('上下文 1 ·'));
  await frame.waitForSelector('.context-pin');
  assert.equal(await frame.$eval('.context-pin',n=>n.textContent),'1');
- const overlaps=await frame.$eval('.context-pin',n=>{const p=n.getBoundingClientRect(),b=n.parentElement.getBoundingClientRect();return Math.max(0,Math.min(p.right,b.right)-Math.max(p.left,b.left))*Math.max(0,Math.min(p.bottom,b.bottom)-Math.max(p.top,b.top));});
+ const overlaps=await frame.$eval('.context-pin-actions',n=>{const p=n.getBoundingClientRect(),b=n.parentElement.getBoundingClientRect();return Math.max(0,Math.min(p.right,b.right)-Math.max(p.left,b.left))*Math.max(0,Math.min(p.bottom,b.bottom)-Math.max(p.top,b.top));});
  assert.equal(overlaps,0,'badge must not cover the selected block text');
  await frame.evaluate(()=>window.__selection.clear());
  assert.equal(await frame.$eval('.context-mark',n=>getComputedStyle(n).borderTopStyle),'dashed');
@@ -114,11 +114,34 @@ try {
    await window.__contexts.add();
  });
  await host.waitForFunction(()=>window.__modelContexts.at(-1)?.structuredContent?.contextBlocks?.length===2);
+ const compact=await frame.$$eval('#contextList .context-jump',nodes=>nodes.map(n=>({text:n.textContent,width:n.closest('li').getBoundingClientRect().width,icon:!!n.querySelector('svg')})));
+ assert.deepEqual(compact.map(n=>n.text),['1P1','2P1']);
+ assert.ok(compact.every(n=>n.icon&&n.width<115),'context chips stay compact');
+ const colorsBefore=await frame.evaluate(()=>window.__contexts.items.map(b=>b.contextColor));
+ assert.equal(new Set(colorsBefore).size,2,'same-type contexts get distinct colors');
+ await frame.evaluate(()=>{window.__contexts.render();window.__contexts.redraw();});
+ assert.deepEqual(await frame.evaluate(()=>window.__contexts.items.map(b=>b.contextColor)),colorsBefore);
+ for(const item of await frame.evaluate(()=>window.__contexts.items.map(b=>({id:b.id,color:b.contextColor})))) {
+   const matching=await frame.evaluate(id=>{
+     const row=[...document.querySelectorAll('#contextList li')].find(n=>n.dataset.id===id);
+     const mark=[...document.querySelectorAll('.context-mark')].find(n=>n.dataset.id===id);
+     return getComputedStyle(row.querySelector('.context-number')).color===getComputedStyle(mark.querySelector('.context-pin')).color;
+   },item.id);
+   assert.ok(matching,'tray and page pin share the assigned color');
+ }
+ if(process.argv.includes('--screenshot')) await host.screenshot({path:process.argv[process.argv.indexOf('--screenshot')+1].replace('.png','-compact.png')});
  await frame.click('#contextList button[data-action="remove"]');
  await host.waitForFunction(()=>window.__modelContexts.at(-1)?.structuredContent?.contextBlocks?.length===1);
  assert.equal(await frame.evaluate(()=>window.__contexts.items[0].contextNumber),2);
  assert.ok((await host.evaluate(()=>window.__modelContexts.at(-1).content[1]._meta['openai/title'])).startsWith('上下文 2 ·'));
  assert.equal(await frame.$$eval('.context-pin',nodes=>nodes.map(n=>n.textContent).join()),'2');
+ assert.equal(await frame.evaluate(()=>window.__contexts.items[0].contextColor),colorsBefore[1]);
+ // The page control removes the same attachment as the tray, including the host context.
+ await frame.click('.context-pin-remove');
+ await host.waitForFunction(()=>window.__modelContexts.at(-1)?.structuredContent?.contextBlocks?.length===0);
+ assert.equal(await frame.$('.context-mark'),null);
+ await frame.evaluate(async()=>{await window.__contexts.add();});
+ await host.waitForFunction(()=>window.__modelContexts.at(-1)?.structuredContent?.contextBlocks?.length===1);
  await host.evaluate(()=>window.__clearModelContext());await frame.waitForFunction(()=>window.__contexts.items.length===0);
  assert.equal(await frame.$('.context-mark'),null,'host removal clears the page marker');
  pageCount=await frame.evaluate(()=>window.__reader.doc.pageCount);
@@ -158,5 +181,5 @@ try {
  // A narrow panel still exposes the controls and keeps context text in its own scroller.
  await host.setViewport({width:420,height:740});
  assert.equal(await frame.evaluate(()=>document.documentElement.scrollWidth<=window.innerWidth),true);
- console.log(JSON.stringify({pass:true,layout:result,checks:['no automatic cloud request','local model','block context thumbnail/group','host removal synchronization','unfilled solid selection and typed dashed hover','saved block tint','numbered page/tray linking','marker survives crop and zoom','download completion waits for usable local results','single-page/source controls removed','whole-document atomic source','compact on-demand policy','full text retrieval and version deduplication','global model OCR permission','password key setup without automatic upload','layout toggle','narrow panel'],cloudRequests:submits}));
+ console.log(JSON.stringify({pass:true,layout:result,checks:['no automatic cloud request','local model','block context thumbnail/group','host removal synchronization','unfilled solid selection and typed dashed hover','saved block tint','numbered page/tray linking','compact distinct-color chips','stable matching pin colors','page pin removal synchronizes host','marker survives crop and zoom','download completion waits for usable local results','single-page/source controls removed','whole-document atomic source','compact on-demand policy','full text retrieval and version deduplication','global model OCR permission','password key setup without automatic upload','layout toggle','narrow panel'],cloudRequests:submits}));
 }finally{await browser?.close();server.kill();await new Promise(r=>cloud.close(r));await rm(root,{recursive:true,force:true});}
