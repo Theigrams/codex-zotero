@@ -46,4 +46,6 @@
 
 本地 MCP/浏览器预检通过不计为 Chat 端到端通过。剩余验收条件是：在目标 Chat 中成功执行一次正文读取，返回实际文字并据此引用原 PDF 页码。若宿主没有将本地工具交给该 Chat，插件代码无法自行增加它的工具权限；可另行评估本地 Work/Codex、可访问的远程 MCP，或用户主动添加全文的备用流程。当前版本未自动切换模式、开启公网服务或注入全文。
 
+已增加可选的 [Chat 私有远程 MCP 桥接](CHAT_REMOTE.md)，通过 OpenAI Secure MCP Tunnel 回到正在运行的阅读器。该链路已有本地双进程测试，真实 Chat 的验收仍需完成账号登录、隧道关联与工具调用；不能将桥接实现完成表述成账号已连接。
+
 参考：[工具可见性与返回格式](https://developers.openai.com/plugins/reference)、[桌面本地插件](https://developers.openai.com/plugins/deploy/desktop-only)、[WebMCP](https://github.com/openai/mcp-extensions/blob/main/docs/spec.md#webmcp)。

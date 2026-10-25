@@ -680,6 +680,7 @@ async function start() {
   showMessage('正在打开…');
   try {
     const hello = await host.call('panel_hello', { instance });
+    conversation.readerSession = hello.readerSession || null;
     prefs = hello.prefs;
     Object.assign(timing, hello.timing || {});
     keys = keymap(prefs.keys);

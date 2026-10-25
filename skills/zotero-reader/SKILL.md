@@ -15,6 +15,8 @@ A tool name mentioned in background context is not proof that the tool is callab
 
 The reader is an embedded MCP App, not an ordinary browser tab. Do not connect to a browser, open its source HTML, or invent a tool invocation to reach the named page tools when they are absent from your actual tool surface. `readingAccess.registeredPageTools` reports registration inside the page only; `modelToolExposure: unknown` means the page cannot verify model discovery. Treat missing tools as an access limitation, not an OCR failure; do not re-upload or re-recognize the paper to fix it.
 
+For the private remote connector, pass the exact `readerSession` published by the current reader together with an explicit `docId` when the tool requires it. `reader_connections` lists live sessions if the context is missing; match the paper or ask when ambiguous, never take the first session automatically. A closed/restarted reader has a new session: refresh the connection list. The remote connector shares the local reader's OCR queue and cached versions; do not try to start another local server, request a filesystem path, or change credentials. The remote profile supports reading and OCR, not annotation edits or saving answers; only save through the local write tools when those are actually available.
+
 ## Knowing what the user means
 
 - The panel keeps a short reading context in this conversation (paper, page, selection). For "this / here / 这段 / 这个公式", use it; call `reader_state` if it is missing or stale.

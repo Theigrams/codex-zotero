@@ -41,6 +41,11 @@ export async function buildPlugin({ python = process.env.CODEX_ZOTERO_PYTHON || 
     format: 'esm', target: 'node22', logLevel: 'warning',
     banner: { js: 'import { createRequire as __cr } from "node:module"; const require = __cr(import.meta.url);' },
   });
+  await build({
+    entryPoints:['src/bridge/index.mjs'], outfile:`${root}/dist/chat-bridge.mjs`, bundle:true,
+    platform:'node', format:'esm', target:'node22', logLevel:'warning',
+    banner:{js:'import { createRequire as __cr } from "node:module"; const require = __cr(import.meta.url);'},
+  });
 
   const ui = await build({
     entryPoints: ['src/panel/main.js'], bundle: true, write: false, platform: 'browser', format: 'iife',

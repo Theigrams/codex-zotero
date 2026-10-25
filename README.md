@@ -110,3 +110,5 @@ npm run uninstall-plugin
 ## 许可
 
 MIT，见 [LICENSE](LICENSE)。第三方组件见 [THIRD_PARTY.md](THIRD_PARTY.md)。PyMuPDF（AGPL）不随本仓库分发，由你自行安装。
+
+Chat 中无法取得本地工具时，可配置 [私有远程 MCP 桥接](docs/CHAT_REMOTE.md)；保留本地阅读器，模型通过官方 Secure MCP Tunnel 按需读取。

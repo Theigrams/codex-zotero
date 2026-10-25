@@ -31,6 +31,9 @@ import { modelToolMetadata, modelToolResult } from './tool-policy.mjs';
 import { resolvePdf, searchAnnotations, searchLibrary } from './zotero.mjs';
 import { registerExtensions } from './extensions.mjs';
 import { Research, researchTools, researchKeys } from './research.mjs';
+import { startLocalBridge } from '../bridge/local.mjs';
+import { bridgeDefinitions } from '../bridge/tools.mjs';
+import { jsonFile } from './files.mjs';
 
 const here = dirname(fileURLToPath(import.meta.url));
 const argv = process.argv.slice(2);
@@ -192,6 +195,16 @@ const ctx = {
   analysis, annotations, maps, readingNotes, paper, pool, state, docById, activeDoc, paperTab, tabsView, view: () => view, navigate, searchLibrary, searchAnnotations, live: () => live, asked: () => asked };
 const forModel = modelTools(ctx);
 const forResearch = researchTools(research);
+let chatBridge = null;
+if (argv.includes('--chat-bridge') || (await jsonFile(join(stateRoot, 'chat-bridge-enabled.json'), {})).enabled === true) {
+  chatBridge = await startLocalBridge({ root:stateRoot, definitions:bridgeDefinitions({...forModel,...forResearch}),
+    describe:async()=>{
+      const record=live?.docId ? await state.document(live.docId) : null;
+      return { document:record ? {docId:live.docId,title:record.title,itemKey:record.itemKey} : null,
+        live:Date.now()-lastPoll<15000 };
+    },
+  });
+}
 
 const CAPTION_KIND = { fig: '图', tab: '表', alg: '算法' };
 async function outlineX(doc, page, y, kind) {
@@ -234,7 +247,7 @@ const appTools = {
         error = e.message;
       }
     }
-    return { prefs: await readerPrefs(), ...view, active, error, navSeq: nav.seq, ...(FAST ? { timing: { navPollMs: 200, annotationsPollMs: 300, mapPollMs: 300 } } : {}) };
+    return { prefs: await readerPrefs(), ...view, active, error, navSeq: nav.seq, readerSession:chatBridge?.id || null, ...(FAST ? { timing: { navPollMs: 200, annotationsPollMs: 300, mapPollMs: 300 } } : {}) };
   },
   async panel_poll({ instance, seen = 0 }) {
     const superseded = activeInstance !== null && instance !== activeInstance;
@@ -443,7 +456,8 @@ async function openReader({ itemKey, attachmentKey } = {}) {
   return { text, document: doc && { id: doc.id, title: doc.title, itemKey: doc.itemKey, pageCount: doc.pageCount } };
 }
 
-function shutdown() {
+async function shutdown() {
+  await chatBridge?.close();
   research.close();
   analysis.close();
   pool.close();

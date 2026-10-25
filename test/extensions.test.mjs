@@ -77,6 +77,20 @@ test('page registration never claims Chat model access or injects the cached bod
   } finally { clearTimeout(conversation.timer); delete globalThis.window; }
 });
 
+test('private connector session follows paper and research-home context without claiming discovery', () => {
+  const {conversation}=testConversation();
+  try {
+    conversation.readerSession='b'.repeat(32);
+    for(const elsewhere of [null,'文库首页']) {
+      conversation.elsewhere=elsewhere;
+      const result=conversation.context();
+      assert.equal(result.structured.readingAccess.readerSession,'b'.repeat(32));
+      assert.equal(result.structured.readingAccess.modelToolExposure,'unknown');
+      assert.ok(result.text.includes('readerSession='+ 'b'.repeat(32)));
+    }
+  } finally {delete globalThis.window;}
+});
+
 test('preparing a question publishes context without changing fullscreen or the native draft', async () => {
   const events = [];
   const { conversation } = testConversation({ app: {

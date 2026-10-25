@@ -10,7 +10,8 @@
     "install-plugin": "node install.mjs",
     "uninstall-plugin": "node uninstall.mjs",
     "setup-analysis": "node setup-analysis.mjs",
-    "configure-mineru": "node configure-mineru.mjs"
+    "configure-mineru": "node configure-mineru.mjs",
+    "chat-bridge": "node setup-chat-bridge.mjs"
   },
   "devDependencies": {
     "esbuild": "0.28.2",

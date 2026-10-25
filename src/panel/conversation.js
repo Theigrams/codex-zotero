@@ -45,13 +45,15 @@ export class Conversation {
 
   context() {
     if (this.elsewhere || !this.reader.doc) {
-      return { text: this.elsewhere || '[Zotero 阅读器] 面板在首页，没有打开论文。', structured: { document: null, view: this.elsewhere ? 'note' : 'home' } };
+      const session = this.readerSession ? `\n[私有远程桥接] readerSession=${this.readerSession}。仅在本轮实际具有远程 Zotero 工具时使用该连接。` : '';
+      return { text: (this.elsewhere || '[Zotero 阅读器] 面板在首页，没有打开论文。') + session, structured: { document: null, view: this.elsewhere ? 'note' : 'home', ...(this.readerSession ? {readingAccess:{readerSession:this.readerSession,modelToolExposure:'unknown'}} : {}) } };
     }
     const d = this.reader.doc;
     const page = this.reader.currentPage();
     const [a, b] = this.reader.range(0);
     const sel = this.selection.current;
     const lines = [`[Zotero 阅读器] 用户正在读${this.source()}，第 ${page} / ${d.pageCount} 页（屏幕上是第 ${a}${b > a ? `–${b}` : ''} 页）。`];
+    if (this.readerSession) lines.push(`[私有远程桥接] readerSession=${this.readerSession}，docId=${d.id}。若本轮具有远程 Zotero 阅读工具，使用这两个标识读取当前论文；不要自动选择其他阅读器连接。远程工具是否已连接仍由宿主决定。`);
     const fullText = this.fullTexts.get(d.id);
     const retrieval = fullTextContext(d.id, fullText);
     if (retrieval) lines.push(retrieval);
@@ -65,7 +67,7 @@ export class Conversation {
       text: lines.join('\n'),
       structured: {
         document: { id: d.id, title: d.title, itemKey: d.itemKey, attachmentKey: d.attachmentKey, pageCount: d.pageCount },
-        page, visible: [a, b], readingAccess: { registeredPageTools: this.readingTools || [], modelToolExposure: 'unknown' }, ...(fullText ? { fullText } : {}), ...(annotationState ? { annotations: annotationState } : {}),
+        page, visible: [a, b], readingAccess: { registeredPageTools: this.readingTools || [], modelToolExposure: 'unknown', ...(this.readerSession ? {readerSession:this.readerSession} : {}) }, ...(fullText ? { fullText } : {}), ...(annotationState ? { annotations: annotationState } : {}),
         selection: sel ? (sel.kind === 'text' ? { kind: 'text', page: sel.page, text: clip(sel.text) } : { kind: 'region', page: sel.page, rect: sel.rect }) : null,
       },
     };
