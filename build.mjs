@@ -61,6 +61,14 @@ export async function buildPlugin({ python = process.env.CODEX_ZOTERO_PYTHON || 
   html = html.replace('/* BUNDLED_APP */', () => ui.outputFiles[0].text.replace(/<\/script/gi, '<\\/script'));
   new Script(html.match(/<script>([\s\S]*)<\/script>/)[1]); // syntax check of the inlined bundle
   await writeFile(`${root}/dist/panel.html`, html);
+  // Web readers do not have the desktop-installed KaTeX fonts. Embed woff2 fonts without external requests.
+  let webKatex=await readFile('node_modules/katex/dist/katex.min.css','utf8');
+  for(const match of [...webKatex.matchAll(/src:([^;}]*fonts\/([^\s)]+\.woff2)[^;}]*)/g)]) {
+    const bytes=await readFile(`node_modules/katex/dist/fonts/${match[2]}`);
+    webKatex=webKatex.replace(match[0],`src:url(data:font/woff2;base64,${bytes.toString('base64')}) format("woff2")`);
+  }
+  const webHtml=html.replace(katex,()=>webKatex).replace('<script>','<script>window.__ZOTERO_REMOTE__=true;document.body.classList.add("remote-reader");');
+  await writeFile(`${root}/dist/remote-panel.html`,webHtml);
 
   const previewUI = await build({ entryPoints: ['src/panel/paper-preview.js'], bundle: true, write: false, platform: 'browser', format: 'iife', target: 'chrome120', minify: true });
   const previewHtml = (await readFile('src/panel/paper-preview.html', 'utf8')).replace('/* BUNDLED_PREVIEW */', () => previewUI.outputFiles[0].text.replace(/<\/script/gi, '<\\/script'));

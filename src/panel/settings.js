@@ -14,7 +14,7 @@ export class Settings {
   constructor({ call, getPrefs, onChange, openUrl = url => window.open(url, '_blank', 'noopener') }) {
     Object.assign(this, { call, getPrefs, onChange });
     this.el = $('settings');
-    this.tunnel = new TunnelSettings({call,openUrl});
+    this.tunnel = window.__ZOTERO_REMOTE__ ? null : new TunnelSettings({call,openUrl});
     $('mineruForm').addEventListener('submit', e => { e.preventDefault(); this.saveMineru(); });
     $('allowModelOcr').addEventListener('change', () => this.save({ allowModelOcr: $('allowModelOcr').checked }, 'ocrSettingsNote'));
     this.capturing = null; // action id waiting for a new combo
@@ -64,7 +64,7 @@ export class Settings {
   open() {
     this.render();
     this.el.hidden = false;
-    this.tunnel.open();
+    this.tunnel?.open();
     const request = this.loadRequest = (this.loadRequest || 0) + 1;
     this.call('prefs_get').then(({ prefs }) => {
       if (request !== this.loadRequest) return;
@@ -76,7 +76,7 @@ export class Settings {
     this.capturing = null;
     this.loadRequest = (this.loadRequest || 0) + 1;
     $('mineruKey').value = '';
-    this.tunnel.close();
+    this.tunnel?.close();
     $('swatches').hidden = true;
     this.el.hidden = true;
   }

@@ -7,10 +7,11 @@ import { Client } from '@modelcontextprotocol/sdk/client/index.js';
 import { InMemoryTransport } from '@modelcontextprotocol/sdk/inMemory.js';
 import { bridgeDefinitions, callBridgeTool, BRIDGE_TOOLS } from '../src/bridge/tools.mjs';
 import { startLocalBridge, requestBridge, listBridgeSessions } from '../src/bridge/local.mjs';
+import { REMOTE_UI_TOOLS, REMOTE_READER_URI, validateRemoteAppCall } from '../src/bridge/ui-policy.mjs';
 import { createBridgeServer } from '../src/bridge/index.mjs';
 
 const definitions=()=>Object.fromEntries(Object.entries(bridgeDefinitions()).map(([name,tool])=>[name,{...tool,run:async args=>({text:`Body for ${args.docId || name}`,data:{args}})}]));
-test('remote tool surface excludes local files, credentials, writes, UI and implicit document routing',async()=>{
+test('model data tools exclude local files, credentials, annotation writes and implicit document routing',async()=>{
  const tools=definitions();
  for(const name of ['document_file','file_open','mineru_configure','annotate','delete_annotation','reader_open','prefs_set'])assert.ok(!BRIDGE_TOOLS.includes(name));
  for(const name of ['read_pages','paper_full_text','ocr_start','ocr_status'])await assert.rejects(()=>callBridgeTool(tools,name,{}));
@@ -41,7 +42,7 @@ test('remote MCP lists individual tools, routes exact sessions and returns full 
  const client=new Client({name:'test',version:'1'}), [a,b]=InMemoryTransport.createLinkedPair();
  try {
   await Promise.all([server.connect(a),client.connect(b)]);
-  const {tools}=await client.listTools();assert.equal(tools.length,BRIDGE_TOOLS.length+1);
+  const {tools}=await client.listTools();assert.equal(tools.length,BRIDGE_TOOLS.length+REMOTE_UI_TOOLS.length+2);
   const full=tools.find(t=>t.name==='paper_full_text');assert.ok(full.inputSchema.required.includes('readerSession'));assert.ok(full.inputSchema.required.includes('docId'));
   assert.equal(full.annotations.readOnlyHint,true);assert.equal(tools.find(t=>t.name==='ocr_start').annotations.readOnlyHint,false);
   const missing=await client.callTool({name:'paper_full_text',arguments:{docId:'a'.repeat(16)}});assert.equal(missing.isError,true);assert.equal(calls.length,0);
@@ -49,4 +50,29 @@ test('remote MCP lists individual tools, routes exact sessions and returns full 
   assert.equal(result.content[0].text,'Actual full text');assert.equal(result.structuredContent.nextOffset,900);assert.equal(calls[0].id,'b'.repeat(32));assert.equal(calls[0].arguments.readerSession,undefined);
   const listed=await client.callTool({name:'reader_connections',arguments:{}});assert.equal(listed.structuredContent.connections[0].readerSession,'b'.repeat(32));
  } finally {await client.close();await server.close();}
+});
+
+test('remote reader entrypoint serves self-contained UI and app-only operations cannot configure credentials', async()=>{
+ const session='c'.repeat(32),calls=[];
+ const server=createBridgeServer({list:async()=>[{readerSession:session,live:true}],loadPanel:async()=>'<!doctype html><title>Reader</title>',request:async(id,args)=>{calls.push({id,...args});return {result:{active:null,tabs:[],prefs:{}}};}});
+ const client=new Client({name:'ui-test',version:'1'}),[a,b]=InMemoryTransport.createLinkedPair();
+ try {
+  await Promise.all([server.connect(a),client.connect(b)]);
+  const {tools}=await client.listTools(),entry=tools.find(t=>t.name==='reader_open');
+  assert.equal(entry._meta.ui.resourceUri,REMOTE_READER_URI);
+  for(const name of REMOTE_UI_TOOLS)assert.deepEqual(tools.find(t=>t.name===name)._meta.ui.visibility,['app']);
+  for(const name of ['mineru_configure','tunnel_configure','document_file','file_open'])assert.ok(!tools.some(t=>t.name===name));
+  const {contents}=await client.readResource({uri:REMOTE_READER_URI});assert.match(contents[0].mimeType,/profile=mcp-app/);assert.match(contents[0].text,/Reader/);
+  const opened=await client.callTool({name:'reader_open',arguments:{}});assert.equal(opened.structuredContent.readerSession,session);assert.equal(opened.structuredContent.view,'library');
+  const routed=await client.callTool({name:'home_list',arguments:{readerSession:session,query:'Gaussian'}});assert.ok(!routed.isError);assert.equal(calls.at(-1).arguments.query,'Gaussian');assert.equal(calls.at(-1).method,'app');
+  const absent=await client.callTool({name:'home_list',arguments:{query:'test'}});assert.equal(absent.isError,true);
+ } finally {await client.close();await server.close();}
+ for(const name of ['mineru_configure','tunnel_start','document_file','file_open'])assert.throws(()=>validateRemoteAppCall(name,{}),/仅允许在本机/);
+ assert.throws(()=>validateRemoteAppCall('home_list',{query:'test',apiKey:'no'}));
+ assert.equal(validateRemoteAppCall('annotation_update',{docId:'a'.repeat(16),key:'ANNOT001',comment:'My comment'}).comment,'My comment');
+});
+test('remote reader entrypoint requires disambiguation when multiple services are live', async()=>{
+ const server=createBridgeServer({list:async()=>[{readerSession:'a'.repeat(32),live:true},{readerSession:'b'.repeat(32),live:true}],request:async()=>{throw new Error('must not route');}});
+ const client=new Client({name:'ui-test',version:'1'}),[a,b]=InMemoryTransport.createLinkedPair();
+ try {await Promise.all([server.connect(a),client.connect(b)]);const result=await client.callTool({name:'reader_open',arguments:{}});assert.equal(result.isError,true);assert.match(result.content[0].text,/reader_connections/);}finally{await client.close();await server.close();}
 });

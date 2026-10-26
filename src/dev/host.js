@@ -8,10 +8,11 @@ import { z } from 'zod';
 console.debug = () => {};
 
 const frame = document.querySelector('iframe');
-let currentHostContext = { displayMode: 'fullscreen', availableDisplayModes: ['inline', 'fullscreen'], platform: 'desktop', theme: 'light', locale: 'zh-CN' };
+const web = new URLSearchParams(location.search).has('web');
+let currentHostContext = { displayMode: 'fullscreen', availableDisplayModes: ['inline', 'fullscreen'], platform: web ? 'web' : 'desktop', theme: 'light', locale: 'zh-CN' };
 const bridge = new AppBridge(null, { name: 'codex-zotero preflight host', version: '0.1.0' }, {
   serverTools: {}, serverResources: {}, message: { text: {}, image: {} },
-  experimental: { 'openai/modelContext': {}, 'openai/message': {}, 'openai/files': {}, 'openai/resource': {} },
+  ...(web ? {} : {experimental: { 'openai/modelContext': {}, 'openai/message': {}, 'openai/files': {}, 'openai/resource': {} }}),
   downloadFile: {}, updateModelContext: { text: {}, image: {}, structuredContent: {} }, logging: {},
 }, { hostContext: currentHostContext });
 

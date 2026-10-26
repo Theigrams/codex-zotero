@@ -11,7 +11,7 @@ const socketDir = () => `/tmp/codex-zotero-${process.getuid()}`;
 const socketPath = id => join(socketDir(), `${sessionSchema.parse(id)}.sock`);
 const registry = root => join(root, 'bridge-sessions');
 
-export async function startLocalBridge({ root, definitions, describe = async () => ({}) }) {
+export async function startLocalBridge({ root, definitions, appCall, describe = async () => ({}) }) {
   const dir = socketDir();
   await mkdir(dir, { recursive:true, mode:0o700 });
   const info = await lstat(dir);
@@ -44,6 +44,7 @@ export async function startLocalBridge({ root, definitions, describe = async () 
         if (end !== buffer.length-1) throw new Error('一次连接只接受一个请求。');
         if (request.method === 'status') reply = { readerSession:id, ...await describe() };
         else if (request.method === 'call') reply = { result:await callBridgeTool(definitions, request.name, request.arguments || {}) };
+        else if (request.method === 'app' && appCall) reply = { result:await appCall(request.name, request.arguments || {}) };
         else throw new Error('未知桥接请求。');
       } catch (error) {
         reply = { error:error.name === 'ZodError' ? '工具参数无效，请检查文档 id 和参数范围。' : String(error.message).slice(0,500).replace(/\/Users\/[^\s]+/g,'[local path]') };

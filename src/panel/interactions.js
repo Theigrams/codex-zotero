@@ -10,13 +10,21 @@ export class Interactions {
     $('readerMore').onclick = () => {
       this.menu.hidden = !this.menu.hidden;
       $('readerMore').setAttribute('aria-expanded', String(!this.menu.hidden));
-      $('openOriginal').hidden = !host.extensions?.files;
+      const context=host.app?.getHostContext(), display=$('readerDisplay');
+      display.hidden=!host.remote || !['inline','fullscreen'].every(mode=>context?.availableDisplayModes?.includes(mode));
+      display.textContent=context?.displayMode==='fullscreen'?'返回对话':'展开阅读器';
+      $('openOriginal').hidden = host.remote || !host.extensions?.files;
       $('exportContext').hidden = !host.app?.getHostCapabilities()?.downloadFile;
       $('exportContext').disabled = !contexts.items.length;
       $('paperNewDraft').hidden = !host.extensions?.message;
     };
     document.addEventListener('click', e => { if (!e.target.closest('#readerMenu, #readerMore')) this.close(); });
     document.addEventListener('keydown', e => { if (e.key === 'Escape' && !this.menu.hidden) { this.close(); $('readerMore').focus(); } });
+    $('readerDisplay').onclick=()=>this.run(async()=>{
+      const mode=host.app.getHostContext()?.displayMode==='fullscreen'?'inline':'fullscreen';
+      const result=await host.app.requestDisplayMode({mode});
+      if(result.mode!==mode)notify('当前 ChatGPT 界面未切换显示模式，可使用宿主提供的展开按钮。');
+    });
     $('copyLocation').onclick = () => this.run(() => this.copyLocation());
     $('openOriginal').onclick = () => this.run(async () => {
       if (!reader.doc) throw new Error('请先打开论文。');

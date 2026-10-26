@@ -49,3 +49,11 @@
 已增加可选的 [Chat 私有远程 MCP 桥接](CHAT_REMOTE.md)，通过 OpenAI Secure MCP Tunnel 回到正在运行的阅读器。该链路已有本地双进程测试，真实 Chat 的验收仍需完成账号登录、隧道关联与工具调用；不能将桥接实现完成表述成账号已连接。
 
 参考：[工具可见性与返回格式](https://developers.openai.com/plugins/reference)、[桌面本地插件](https://developers.openai.com/plugins/deploy/desktop-only)、[WebMCP](https://github.com/openai/mcp-extensions/blob/main/docs/spec.md#webmcp)。
+
+## 网页阅读器界面（2026-10-26）
+
+此前的私有桥接只发布数据工具，网页能够读取标题/正文并不意味着会显示 PDF 界面。这是旧桥接缺少 UI 资源和打开入口导致的实现缺口。现已增加 `reader_open` 及完整 MCP App HTML，网页操作通过 App-only 工具转发到同一本机服务。无需 WebMCP 或 localhost 访问权限，模型读取与界面显示分别有独立入口。
+
+更新后完全重启本机宿主、重连隧道，并在 Chat 刷新工具。确认 `reader_open` 已出现，再发送「打开 Zotero 阅读器」。若只得到文字回复，检查是否真正调用了该入口以及资源是否加载；不要把重新 OCR 当作界面修复。网页布局由 ChatGPT 控制；支持 inline/fullscreen 请求，不承诺固定侧边栏。
+
+隔离网页宿主测试已覆盖 PDF 打开、选区上下文、高亮/评论写回和模型读取评论；真实账号的资源渲染仍需要用户更新连接后验收。
