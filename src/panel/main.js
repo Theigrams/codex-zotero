@@ -3,9 +3,10 @@
 // Zotero annotations are annotations.js (layer), popup.js (one annotation) and drawer.js (the list);
 // find.js is ⌘F and home.js the search + "being read" page.
 import { DEFAULT_PALETTE } from '../shared/annotations.mjs';
-import { actionFor, comboOf, keymap } from '../shared/keys.mjs';
+import { actionFor, comboOf, keymap, showCombo } from '../shared/keys.mjs';
 import { targetBlock } from '../shared/text.mjs';
 import { AnnotationLayer } from './annotations.js';
+import { BlockLayer } from './blocks.js';
 import { Conversation } from './conversation.js';
 import { AnnotationDrawer } from './drawer.js';
 import { AnnotationPopup } from './popup.js';
@@ -15,7 +16,7 @@ import { Links } from './links.js';
 import { connect } from './host.js';
 import { Reader } from './reader.js';
 import { Selection } from './selection.js';
-import { Settings } from './settings.js';
+import { Settings, bindEye, hideKey } from './settings.js';
 import { timing } from './timing.js';
 
 const $ = id => document.getElementById(id);
@@ -33,6 +34,7 @@ let drawer = null;
 let find = null;
 let home = null;
 let links = null;
+let blocks = null;
 let settings = null;
 let doc = null;
 let noteReturn = null; // { id, title } of the note a link led here from (↩ goes back to it)
@@ -58,7 +60,7 @@ function hideMessage() {
 // ---------- top bar ----------
 
 function updateBar(page = reader?.currentPage()) {
-  for (const id of ['pageLabel', 'zoomLabel']) $(id).hidden = !doc || home.isOpen;
+  for (const id of ['pageLabel', 'zoomLabel', 'recButton']) $(id).hidden = !doc || home.isOpen;
   $('annButton').hidden = !(doc || noteTab) || home.isOpen;
   $('annButton').title = noteTab ? '目录（A）' : '批注（A）';
   const back = links?.backPage;
@@ -68,6 +70,94 @@ function updateBar(page = reader?.currentPage()) {
   if (!doc) return;
   $('pageLabel').textContent = `${page} / ${doc.pageCount}`;
   $('zoomLabel').textContent = `${Math.round((reader?.zoom ?? 1) * 100)}%`;
+}
+
+// The enhanced-recognition icon: its state comes with each poll for the paper on screen.
+let recognition = { state: 'none' };
+const BACKEND = { self: '自部署 MinerU', official: 'MinerU 官方 API' };
+const canRecognize = () => !!(prefs.secrets?.mineru || prefs.recognition?.selfUrl);
+
+// A failure the user fixes with a new key: which key.
+const refusedKey = r => (r.state === 'failed' && /Key 无效/.test(r.error || '') ? (r.backend === 'self' ? 'mineru-self' : 'mineru') : null);
+
+function renderRecognition(r = recognition) {
+  if (r.state === 'done' && recognition.state !== 'done') blocks?.reset(); // pages asked for before it ended had no blocks
+  recognition = r;
+  const b = $('recButton');
+  b.className = `icon ${r.state === 'queued' ? 'running' : r.state}`;
+  b.title = r.state === 'done' ? `增强识别已生效（${BACKEND[r.backend] || r.backend}，${r.date}）`
+    : r.state === 'queued' ? '增强识别：排队中'
+    : r.state === 'running' ? `增强识别：${r.stage || '进行中'}（${BACKEND[r.backend] || ''}）`
+    : r.state === 'failed' ? `增强识别失败：${r.error}\n${refusedKey(r) ? '点击重新填写 Key' : '点击重试'}`
+    : canRecognize() ? '增强识别：未识别。点击用 MinerU 识别这篇（需要上传 PDF）' : '增强识别：未识别，还没有 MinerU Key。点击填写';
+}
+
+// A click on the icon recognizes the paper on screen; without a key (or with a refused one) it asks for one first.
+async function recognizeThis() {
+  if (!doc) return;
+  if (!$('recPop').hidden) return closeKeyPrompt();
+  const key = refusedKey(recognition);
+  if (key) return askKey(key);
+  if (recognition.state !== 'none' && recognition.state !== 'failed') return;
+  if (!canRecognize()) return askKey('mineru');
+  try {
+    renderRecognition((await host.call('recognition_start', { docId: doc.id })).recognition);
+  } catch (e) {
+    renderRecognition({ state: 'failed', error: e.message });
+  }
+}
+
+// ---------- the key prompt under the icon ----------
+
+function askKey(name) {
+  const self = name === 'mineru-self', saved = prefs.secrets?.[name];
+  $('recPopText').textContent = self
+    ? (saved ? '自部署 MinerU 不接受已保存的 Key。填写新的 Key，识别这篇：' : '自部署 MinerU 需要 Key。填写后识别这篇：')
+    : (saved ? 'MinerU 不接受已保存的 Key（可能已过期）。填写新的 Key，识别这篇：' : '填写 MinerU 的 API Key，识别这篇论文：');
+  $('recPopHint').textContent = self ? 'Key 只存在本机钥匙串。' : 'Key 在 mineru.net 的 API 管理页申请，只存在本机钥匙串。用自部署的 MinerU？点「更多设置」。';
+  $('recPop').dataset.name = name;
+  $('recPopKey').value = '';
+  hideKey($('recPopKey'));
+  $('recPopSay').textContent = '';
+  $('recPop').hidden = false;
+  $('recPopKey').focus();
+}
+
+function closeKeyPrompt() {
+  $('recPop').hidden = true;
+  $('recPopKey').value = '';
+}
+
+// 保存并识别: the key is checked first (nothing uploaded), saved only when the service takes it.
+async function saveKeyAndRecognize() {
+  const name = $('recPop').dataset.name, key = $('recPopKey').value.trim(), go = $('recPopGo');
+  if (!key) return void ($('recPopSay').textContent = '请先填写 Key。');
+  $('recPopSay').textContent = '';
+  go.disabled = true;
+  go.textContent = '检查中…';
+  try {
+    const t = await host.call('recognition_test', { backend: name === 'mineru-self' ? 'self' : 'official', key });
+    if (!t.ok) return void ($('recPopSay').textContent = t.message);
+    applyPrefs((await host.call('secret_set', { name, value: key })).prefs);
+    closeKeyPrompt();
+    toast('Key 有效，已保存到钥匙串。开始识别这篇。');
+    renderRecognition({ state: 'none' }); // the refused attempt is over
+    await recognizeThis();
+  } catch (e) {
+    $('recPopSay').textContent = e.message;
+  } finally {
+    go.disabled = false;
+    go.textContent = '保存并识别';
+  }
+}
+
+let toastTimer = null;
+function toast(text, ok = true) {
+  $('toast').textContent = text;
+  $('toast').classList.toggle('bad', !ok);
+  $('toast').hidden = false;
+  clearTimeout(toastTimer);
+  toastTimer = setTimeout(() => { $('toast').hidden = true; }, ok ? 3500 : 6000);
 }
 
 // Hide the bar while reading down, bring it back when scrolling up or near the top.
@@ -289,6 +379,7 @@ function showDoc(active) {
   $('note').hidden = !doc.unsupported;
   reader.load(doc, { mode: prefs.renderMode, position: active.position });
   links.reset();
+  blocks.reset();
   annotations.load(doc);
   selection.prefetch(range(...reader.range(0)));
   links.prefetch(range(...reader.range(0)));
@@ -363,13 +454,21 @@ async function follow(n) {
   updateBar();
 }
 
-// Outlines the block of text at a jump target (the equation, the figure and its caption, …) in its column;
-// fallback: the given rect.
+// Outlines what a jump target is (the equation, the figure with its caption, …): the box enhanced recognition
+// found, brought fully into view; without one, the block guessed from the text layer in its column; else the
+// given rect.
+async function jumpRect(k, at) {
+  const found = await blocks.target(k, at).catch(() => null);
+  if (found) {
+    reader.reveal(k, found);
+    return found;
+  }
+  const text = await selection.textFor(k).catch(() => null);
+  return (text && targetBlock(text, text.lines, at)) || null;
+}
+
 function flashBlock(k, at, fallback) {
-  selection.textFor(k)
-    .then(text => targetBlock(text, text.lines, at) || fallback)
-    .catch(() => fallback)
-    .then(r => flashRects(k, [r]));
+  jumpRect(k, at).catch(() => null).then(r => flashRects(k, [r || fallback]));
 }
 
 function flashRects(k, rects) {
@@ -413,6 +512,7 @@ function applyPrefs(next) {
   if (prefs.renderMode !== mode) reader?.setMode(prefs.renderMode);
   popup?.render();
   drawer?.render();
+  renderRecognition();
 }
 
 // ---------- selection toolbar ----------
@@ -518,6 +618,11 @@ function jumpTo(a) {
 async function copySelection() {
   const text = selection?.current?.kind === 'text' ? selection.current.text : '';
   if (!text) return;
+  await copyText(text);
+  note('已复制');
+}
+
+async function copyText(text) {
   try {
     await navigator.clipboard.writeText(text);
   } catch {
@@ -529,7 +634,30 @@ async function copySelection() {
     document.execCommand('copy');
     t.remove();
   }
-  note('已复制');
+}
+
+// A PNG (base64) to the clipboard as a picture; where the async clipboard is denied, a selected image + copy.
+async function copyImage(data) {
+  const bytes = Uint8Array.from(atob(data), c => c.charCodeAt(0));
+  try {
+    await navigator.clipboard.write([new ClipboardItem({ 'image/png': new Blob([bytes], { type: 'image/png' }) })]);
+  } catch {
+    const box = document.createElement('div');
+    box.contentEditable = 'true';
+    Object.assign(box.style, { position: 'fixed', left: '-9999px', top: '0' });
+    const img = document.createElement('img');
+    img.src = `data:image/png;base64,${data}`;
+    box.appendChild(img);
+    document.body.appendChild(box);
+    const range = document.createRange();
+    range.selectNode(img);
+    getSelection().removeAllRanges();
+    getSelection().addRange(range);
+    const done = document.execCommand('copy');
+    getSelection().removeAllRanges();
+    box.remove();
+    if (!done) throw new Error('面板不允许写入剪贴板');
+  }
 }
 
 // ---------- debug line (⇧D), for acceptance measurements ----------
@@ -577,14 +705,18 @@ function runAction(id) {
     closeTab: () => !!activeId() && !home.isOpen && (closeTab(activeId()), true),
     settings: () => (toggleSettings(), true),
     debug: () => reading && (($('debug').hidden = !$('debug').hidden), renderDebug(), true),
+    blocks: () => reading && (blocks.toggle(reader.position().page), true),
   }[id];
   return !!run?.();
 }
 
 function onKey(e) {
   if (e.key === 'Alt') document.body.classList.add('alt');
-  if (['annComment', 'findInput', 'search'].includes(e.target.id)) return; // these handle their own keys
-  if (e.target.closest?.('#settings') && e.target.matches('input[type=text], textarea')) return;
+  if (['annComment', 'findInput', 'search', 'recPopKey'].includes(e.target.id)) return; // these handle their own keys
+  if (e.target.closest?.('#settings') && e.target.matches('input[type=text], input[type=password], textarea')) {
+    if (e.key === 'Escape') closeSettings(); // and the keys work again: the focus goes back to the page
+    return;
+  }
   if (e.target.id === 'askInput') {
     if (e.key === 'Enter' && !e.isComposing) sendAsk();
     if (e.key === 'Escape') closeAsk();
@@ -605,7 +737,8 @@ function onKey(e) {
     return;
   }
   if (e.key === 'Escape') {
-    if (home.isOpen) leaveHome();
+    if (!$('recPop').hidden) closeKeyPrompt();
+    else if (home.isOpen) leaveHome();
     else if (!$('tocDrawer').hidden) closeToc();
     else if (find.isOpen) find.close();
     else if (popup.isOpen) popup.close();
@@ -656,7 +789,8 @@ function toggleDrawer() {
 
 async function poll() {
   try {
-    const r = await host.call('panel_poll', { instance, seen: navSeen });
+    const r = await host.call('panel_poll', { instance, seen: navSeen, ...(doc ? { docId: doc.id } : {}) });
+    if (r.recognition) renderRecognition(r.recognition);
     if (r.superseded) {
       conversation.retire();
       annotations.stop();
@@ -710,6 +844,7 @@ async function main() {
     },
     onPageCreated: k => {
       annotations?.draw(k);
+      blocks?.draw(k);
       find?.draw(k);
       selection?.draw(k);
     },
@@ -730,7 +865,7 @@ async function main() {
     listNotes: async () => (doc ? host.call('notes_list', { docId: doc.id }) : { notes: [], map: null }),
     generateMap: () => host.call('map_generate', { docId: doc.id }), palette,
   });
-  settings = new Settings({ call: host.call, getPrefs: () => prefs, onChange: applyPrefs });
+  settings = new Settings({ call: host.call, getPrefs: () => prefs, onChange: applyPrefs, toast });
   home = new Home({ call: host.call, onOpen: openTab, onLeave: leaveHome });
   selection = new Selection({
     reader, call: host.call, onChange: onSelection,
@@ -745,6 +880,7 @@ async function main() {
       else popup.close();
     },
   });
+  blocks = new BlockLayer({ reader, call: host.call, copyText, copyImage, toast, exitKey: () => showCombo(keys.blocks) });
   conversation = new Conversation({ host, reader, selection });
   find = new Find({ reader, selection });
   links = new Links({
@@ -790,6 +926,23 @@ async function main() {
   $('pageInput').addEventListener('blur', () => closePageInput(false));
   $('zoomLabel').addEventListener('click', () => { reader.fitWidth(); updateBar(); });
   $('settingsButton').addEventListener('click', toggleSettings);
+  $('recButton').addEventListener('click', recognizeThis);
+  bindEye($('recPopKey').closest('.secret'));
+  $('recPop').addEventListener('mousedown', e => e.stopPropagation());
+  window.addEventListener('mousedown', e => {
+    if (!$('recPop').hidden && !e.target.closest('#recPop, #recButton')) closeKeyPrompt();
+  });
+  $('recPopKey').addEventListener('keydown', e => {
+    if (e.key === 'Enter' && !e.isComposing) saveKeyAndRecognize();
+    if (e.key === 'Escape') closeKeyPrompt();
+  });
+  $('recPopGo').addEventListener('click', saveKeyAndRecognize);
+  $('recPopCancel').addEventListener('click', closeKeyPrompt);
+  $('recPopMore').addEventListener('click', () => {
+    closeKeyPrompt();
+    openSettings();
+    $('recSection').scrollIntoView({ block: 'start' });
+  });
   $('settingsClose').addEventListener('click', closeSettings);
   $('retry').addEventListener('click', start);
   window.__reader = reader; // for acceptance tests that read metrics from the DOM
@@ -797,6 +950,7 @@ async function main() {
   window.__annotations = annotations;
   window.__find = find;
   window.__links = links;
+  window.__blocks = blocks;
   await start();
   poll();
 }

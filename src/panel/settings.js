@@ -1,17 +1,49 @@
 // The settings drawer (⌘,): render mode, the annotation palette (colors and tags; the row tagged 问答 is for AI answers),
-// keyboard shortcuts, the paper map's model and prompt, and the reading questions guided reading follows. Every change is saved at once (prefs_set).
+// keyboard shortcuts, the paper map's model and prompt, enhanced recognition (switch, official and self-hosted MinerU — kept
+// in the keychain by the server, never sent back), and the reading questions guided reading follows. Every change is saved at once (prefs_set).
 import { DEFAULT_PALETTE, ZOTERO_COLORS } from '../shared/annotations.mjs';
 import { ACTIONS, DEFAULT_KEYS, comboOf, keymap, reserved, showCombo } from '../shared/keys.mjs';
 import { MAP_PROMPT } from '../server/map-prompt.mjs';
 import { DEFAULT_QUESTIONS, parseTemplate } from '../server/reading-questions.mjs';
 
 const $ = id => document.getElementById(id);
+
+// The same rule as the server (state.mjs): the key travels with every request, so plain http only to this machine.
+function selfUrlProblem(v) {
+  if (!v) return '';
+  let u;
+  try { u = new URL(v); } catch { return '自部署 MinerU 的地址无效。'; }
+  const loopback = ['127.0.0.1', 'localhost', '[::1]'].includes(u.hostname);
+  return u.protocol === 'https:' || (u.protocol === 'http:' && loopback) ? '' : '自部署 MinerU 的地址应以 https://（本机服务可用 http://）开头。';
+}
 const MAX_COLORS = 9;
 
+const EYE = '<svg width="14" height="14" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.3" aria-hidden="true">'
+  + '<path d="M1.5 8s2.4-4.5 6.5-4.5S14.5 8 14.5 8s-2.4 4.5-6.5 4.5S1.5 8 1.5 8z"/><circle cx="8" cy="8" r="2"/><path class="shut" d="M2.5 2.5l11 11"/></svg>';
+
+// The eye beside a key field (span.secret): shows what is being typed, or hides it again. It keeps the focus in
+// the field, so showing the key doesn't save it half typed.
+export function bindEye(box) {
+  const input = box.querySelector('input'), eye = box.querySelector('.eye');
+  eye.innerHTML = EYE;
+  eye.addEventListener('mousedown', e => e.preventDefault());
+  eye.addEventListener('click', e => {
+    e.preventDefault();
+    const show = input.type === 'password';
+    input.type = show ? 'text' : 'password';
+    box.classList.toggle('shown', show);
+  });
+}
+
+export const hideKey = input => {
+  input.type = 'password';
+  input.closest('.secret')?.classList.remove('shown');
+};
+
 export class Settings {
-  // getPrefs(): the current preferences; onChange(prefs): after a save.
-  constructor({ call, getPrefs, onChange }) {
-    Object.assign(this, { call, getPrefs, onChange });
+  // getPrefs(): the current preferences; onChange(prefs): after a save; toast(text, ok): a passing notice.
+  constructor({ call, getPrefs, onChange, toast }) {
+    Object.assign(this, { call, getPrefs, onChange, toast });
     this.el = $('settings');
     this.capturing = null; // action id waiting for a new combo
     this.picking = -1;     // palette row whose color is being picked
@@ -51,6 +83,71 @@ export class Settings {
       this.save({ readingQuestions: v.trim() === DEFAULT_QUESTIONS.trim() ? '' : v }, 'noteNote');
     });
     $('noteReset').addEventListener('click', () => this.save({ readingQuestions: '' }, 'noteNote'));
+    const rec = patch => this.save({ recognition: patch }, 'recNote');
+    $('recAuto').addEventListener('change', () => rec({ auto: $('recAuto').checked }));
+    $('recFallback').addEventListener('change', () => rec({ fallback: $('recFallback').checked }));
+    $('recSelfUrl').addEventListener('change', () => {
+      const v = $('recSelfUrl').value.trim();
+      const problem = selfUrlProblem(v);
+      if (problem) {
+        $('recNote').textContent = problem; // what was typed stays, to be corrected
+        this.refused = 'recNote';
+        return;
+      }
+      rec({ selfUrl: v });
+    });
+    $('recTest').addEventListener('click', () => this.test());
+    for (const [id, name] of [['recKey', 'mineru'], ['recSelfKey', 'mineru-self']]) {
+      bindEye($(id).closest('.secret'));
+      // A new value replaces the key; Enter on an empty field removes a key that is set.
+      $(id).addEventListener('change', () => $(id).value.trim() && this.secret(name, $(id).value, id));
+      $(id).addEventListener('keydown', e => {
+        if (e.key === 'Enter' && !$(id).value && this.getPrefs().secrets?.[name]) this.secret(name, '', id);
+      });
+    }
+  }
+
+  // Saves run through this.pending, so 测试 clicked right after typing tests what was typed.
+  secret(name, value, id) {
+    return (this.pending = this.writeSecret(name, value, id));
+  }
+
+  async writeSecret(name, value, id) {
+    this.say('');
+    try {
+      const { prefs } = await this.call('secret_set', { name, value });
+      $(id).value = '';
+      hideKey($(id));
+      this.onChange(prefs);
+      this.render();
+      this.say(value ? '已保存到钥匙串。' : '已删除。', true);
+    } catch (e) {
+      this.say(e.message);
+    }
+  }
+
+  say(text, ok = false) {
+    $('recNote').textContent = text;
+    $('recNote').classList.toggle('ok', ok);
+  }
+
+  // 测试连接: each backend that is set up answers, and takes its key? Nothing is uploaded.
+  async test() {
+    await this.pending;
+    const p = this.getPrefs();
+    const list = [];
+    if (p.recognition?.selfUrl) list.push(['self', '自部署 MinerU']);
+    if (p.secrets?.mineru) list.push(['official', 'MinerU 官方 API']);
+    if (!list.length) return this.say('先填写 MinerU Key，或自部署服务的地址。');
+    this.say('测试中…', true);
+    const results = await Promise.all(list.map(async ([backend, name]) => {
+      const r = await this.call('recognition_test', { backend }).catch(e => ({ ok: false, message: e.message }));
+      return { ...r, text: `${name}：${r.message}` };
+    }));
+    const ok = results.every(r => r.ok);
+    const text = results.map(r => r.text).join('\n');
+    this.say(text, ok);
+    this.toast(ok ? `测试通过。${text}` : text, ok);
   }
 
   get isOpen() {
@@ -68,8 +165,13 @@ export class Settings {
     this.el.hidden = true;
   }
 
-  async save(patch, noteId) {
+  save(patch, noteId) {
+    return (this.pending = this.write(patch, noteId));
+  }
+
+  async write(patch, noteId) {
     if (noteId) $(noteId).textContent = '';
+    $('recNote').classList.remove('ok');
     this.refused = null;
     try {
       const { prefs } = await this.call('prefs_set', patch);
@@ -90,6 +192,13 @@ export class Settings {
     $('mapEffort').value = p.mapEffort || '';
     if (document.activeElement !== $('mapPrompt') && this.refused !== 'mapNote') $('mapPrompt').value = p.mapPrompt || MAP_PROMPT;
     if (document.activeElement !== $('noteTemplate') && this.refused !== 'noteNote') $('noteTemplate').value = p.readingQuestions || DEFAULT_QUESTIONS;
+    const r = p.recognition || {};
+    $('recAuto').checked = !!r.auto;
+    $('recFallback').checked = !!r.fallback;
+    if (document.activeElement !== $('recSelfUrl') && this.refused !== 'recNote') $('recSelfUrl').value = r.selfUrl || '';
+    for (const [id, name] of [['recKey', 'mineru'], ['recSelfKey', 'mineru-self']]) {
+      $(id).placeholder = p.secrets?.[name] ? '已设置（输入新的替换；清空后回车删除）' : '未设置';
+    }
   }
 
   // ---------- palette ----------

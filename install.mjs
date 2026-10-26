@@ -8,7 +8,7 @@
 // sandbox blocks font files, so the panel uses installed fonts by name — KaTeX's 20 fonts (formulas, as in
 // Zotero) and Lora (Latin text in notes; SIL OFL, fonts/). Remove KaTeX_*.ttf and Lora*.ttf there to undo.
 import { execFileSync } from 'node:child_process';
-import { copyFile, cp, readdir, stat } from 'node:fs/promises';
+import { copyFile, cp, mkdir, readdir, stat } from 'node:fs/promises';
 import { homedir } from 'node:os';
 import { basename, join, resolve } from 'node:path';
 import { buildPlugin, INSTALLED, MARKET, PLUGIN } from './build.mjs';
@@ -17,6 +17,7 @@ const CODEX = process.env.CODEX_ZOTERO_CODEX || '/Applications/ChatGPT.app/Conte
 
 const FONT_DIR = join(homedir(), 'Library', 'Fonts');
 async function installFonts() {
+  await mkdir(FONT_DIR, { recursive: true });
   const katex = 'node_modules/katex/dist/fonts';
   const files = [...(await readdir(katex)).filter(f => f.endsWith('.ttf')).map(f => join(katex, f)), 'fonts/Lora[wght].ttf', 'fonts/Lora-Italic[wght].ttf'];
   let added = 0;
@@ -32,16 +33,17 @@ async function installFonts() {
   console.log(added ? `installed ${added} fonts into ~/Library/Fonts (restart Codex to use them)` : `fonts present in ~/Library/Fonts (${files.length})`);
 }
 
-// The absolute path of a Python that can import PyMuPDF, or '' (the plugin then runs without glyph repair).
+// The absolute path of a Python that can import everything in native/requirements.txt (PyMuPDF and fontTools),
+// or '' (the plugin then runs without glyph repair).
 function findPython() {
   const candidate = process.env.CODEX_ZOTERO_PYTHON || 'python3';
   try {
-    const path = execFileSync(candidate, ['-c', 'import sys, pymupdf; print(sys.executable)'], { encoding: 'utf8', stdio: ['ignore', 'pipe', 'ignore'] }).trim();
-    console.log(`PyMuPDF found: ${path}`);
+    const path = execFileSync(candidate, ['-c', 'import sys, pymupdf, fontTools; print(sys.executable)'], { encoding: 'utf8', stdio: ['ignore', 'pipe', 'ignore'] }).trim();
+    console.log(`PyMuPDF and fontTools found: ${path}`);
     return path;
   } catch {
-    console.log(`PyMuPDF not found for ${candidate}: text repair is off. Install it with "${candidate} -m pip install pymupdf" and run this again,`
-      + ' or set CODEX_ZOTERO_PYTHON to a Python that has it.');
+    console.log(`PyMuPDF or fontTools not found for ${candidate}: text repair is off. Install them with`
+      + ` "${candidate} -m pip install -r native/requirements.txt" and run this again, or set CODEX_ZOTERO_PYTHON to a Python that has them.`);
     return '';
   }
 }

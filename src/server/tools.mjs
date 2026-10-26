@@ -1,16 +1,19 @@
 // Tools the model calls (no panel attached: a tool with a UI resource would open a new panel each time,
 // spike S5). They read what the reader shows, read the paper, and write annotations through the same
 // queue as the panel. The skill (skills/zotero-reader/SKILL.md) says when to use which.
+import { mkdir, writeFile } from 'node:fs/promises';
+import { join } from 'node:path';
 import { z } from 'zod';
 import { QA_TAG, colorInfo, qaEntry } from '../shared/annotations.mjs';
 import { childNotes, getNote, noteSection, noteText } from './notes.mjs';
-import { buildOutline, outlineText } from './outline.mjs';
+import { buildOutline, equationRegion, outlineText, pageLines } from './outline.mjs';
+import { equations, withRecognized } from './recognition.mjs';
 import { questionsText } from './reading.mjs';
 
 const KEY = z.string().regex(/^[A-Z0-9]{8}$/);
-// Saved answers are notes to glance at while reading, not explanations (user: "保持注释的简短性…尽可能讲核心").
-const MAX_ANSWER = 300;
 const docArg = { docId: z.string().optional().describe('Reader document id; omit for the paper active in the reader.') };
+// Reading tools also take any paper in the library: it is opened in the background, without a tab.
+const paperArg = { ...docArg, itemKey: KEY.optional().describe('Zotero item key of another paper (from search_library or search_annotations), read without opening it in the reader. Omit for the paper in the reader.') };
 // The user's palette is editable in the settings, so meanings are checked when the tool runs.
 const meaning = z.string().max(30).describe("One of the user's annotation tags (default palette: 重点 yellow, 问答 purple, 定义 blue, 启发 green, 存疑 red; the user may have changed it).");
 function colorOf(palette, tag) {
@@ -19,6 +22,15 @@ function colorOf(palette, tag) {
   return c.color;
 }
 const clip = (s, n) => (s.length > n ? `${s.slice(0, n)}…` : s);
+
+const BACKEND = { self: '自部署 MinerU', official: 'MinerU 官方 API' };
+export function recognitionText(s) {
+  if (s.state === 'done') return `已有增强识别结果（${BACKEND[s.backend] || s.backend}，${s.date}）。`;
+  if (s.state === 'queued') return '增强识别排队中。';
+  if (s.state === 'running') return `增强识别进行中${s.stage ? `：${s.stage}` : ''}（${BACKEND[s.backend] || ''}）。`;
+  if (s.state === 'failed') return `上次增强识别失败：${s.error}`;
+  return '这篇论文还没有增强识别。';
+}
 
 const within = (promise, ms) => Promise.race([promise, new Promise(r => setTimeout(r, ms, null))]);
 
@@ -109,13 +121,14 @@ export function modelTools(ctx) {
 
     paper_context: {
       description: 'One call for answering a question about the paper being read: the current page and its neighbors as repaired text, the selection, and the annotations / earlier AI answers near there. Use this before read_pages; read other pages only when the answer needs them.',
-      schema: { ...docArg, page: z.number().int().min(1).optional().describe('Center page; default: the page on screen.') },
-      async run({ docId, page }) {
-        const doc = await ctx.activeDoc(docId);
+      schema: { ...paperArg, page: z.number().int().min(1).optional().describe('Center page; default: the page on screen.') },
+      async run({ docId, itemKey, page }) {
+        const doc = await ctx.activeDoc(docId, itemKey);
         const live = ctx.live();
         const here = live?.docId === doc.id ? live : null;
         const center = Math.min(doc.pageCount, page || here?.page || (await state.document(doc.id))?.position?.page || 1);
         const pages = await paper.read(doc, Math.max(1, center - 1), Math.min(doc.pageCount, center + 1));
+        const enhanced = pages[0]?.source === 'mineru';
         const { items } = await annotations.list(doc);
         const near = items.filter(a => Math.abs(a.page - center) <= 2);
         const out = [`《${doc.title}》（docId ${doc.id}${doc.itemKey ? `，Zotero 条目 ${doc.itemKey}` : ''}），共 ${doc.pageCount} 页；中心第 ${center} 页。`];
@@ -133,6 +146,7 @@ export function modelTools(ctx) {
         if (here?.selection?.kind === 'region') out.push(`\n用户框选了第 ${here.selection.page} 页的一块区域（图或公式）。`);
         const pal = await palette();
         out.push(near.length ? `\n附近的批注与问答（共 ${items.length} 条中的 ${near.length} 条）：\n${near.map(a => describe(a, pal)).join('\n')}` : `\n附近没有批注（全文共 ${items.length} 条）。`);
+        if (enhanced) out.push('\n（以下原文来自增强识别：公式为 LaTeX，双栏按阅读顺序。）');
         for (const p of pages) out.push(`\n=== 第 ${p.page} 页（页码 ${p.label}）===\n${p.text}`);
         return { text: out.join('\n'), data: { docId: doc.id, center, annotations: near.length } };
       },
@@ -140,23 +154,25 @@ export function modelTools(ctx) {
 
     paper_outline: {
       description: "The paper's structure: PDF bookmarks, section headings, figure and table captions, and numbered equations, each with its page. Use it to find which pages to read (e.g. where equation (12) or Section 3.2 is) instead of reading the whole paper. Built once per paper from the layout; it can miss or mislabel items.",
-      schema: { ...docArg },
-      async run({ docId }) {
-        const doc = await ctx.activeDoc(docId);
+      schema: { ...paperArg },
+      async run({ docId, itemKey }) {
+        const doc = await ctx.activeDoc(docId, itemKey);
         const o = await buildOutline(doc, ctx);
-        return { text: outlineText(doc, o), data: { sections: o.sections.length, captions: o.captions.length, equations: o.equations.length } };
+        const idx = await ctx.recognition.load(doc);
+        const shown = withRecognized(o, idx);
+        return { text: outlineText(doc, shown) + (idx ? '\n\n（编号公式和图表来自增强识别。）' : ''), data: { sections: o.sections.length, captions: shown.captions.length, equations: shown.equations.length } };
       },
     },
 
     paper_map: {
       description: "The paper's map: a Zotero note \"论文地图\" written by a model from the full text — one-line summary, problem and contributions, section structure, key concepts and symbols, method, main results, assumptions and limitations, each with page numbers. Read it once per conversation, the first time a question is about this paper, then don't read it again. It is for finding your way (which pages to read), not a source: check the pages before relying on it.",
-      schema: { ...docArg },
-      async run({ docId }) {
-        const doc = await ctx.activeDoc(docId);
+      schema: { ...paperArg },
+      async run({ docId, itemKey }) {
+        const doc = await ctx.activeDoc(docId, itemKey);
         const job = ctx.maps.status(doc);
         const map = await ctx.maps.read(doc);
         if (!map) {
-          const note = job.status === 'running' ? '论文地图正在生成，通常需要一两分钟。' : '这篇论文还没有论文地图（用户要求时才生成）。';
+          const note = job.status === 'running' ? `论文地图正在生成${job.stage ? `（${job.stage}后开始）` : ''}，通常需要一两分钟。` : '这篇论文还没有论文地图（用户要求时才生成）。';
           return { text: `${note}按需使用 paper_outline、find_in_paper 与 read_pages。`, data: { exists: false, job } };
         }
         const warn = map.stale ? '（注意：地图是为另一版本的 PDF 生成的，页码可能对不上。）\n' : '';
@@ -166,19 +182,31 @@ export function modelTools(ctx) {
 
     paper_map_generate: {
       description: 'Generate (or regenerate) the paper map in the background with gpt-6.1-sol and save it as the Zotero note "论文地图". Only when the user explicitly asks for it: it sends the paper\'s full text to the cloud model and takes a minute or two. Returns at once; read it later with paper_map.',
-      schema: { ...docArg },
-      async run({ docId }) {
-        const doc = await ctx.activeDoc(docId);
+      schema: { ...paperArg },
+      async run({ docId, itemKey }) {
+        const doc = await ctx.activeDoc(docId, itemKey);
         const job = ctx.maps.start(doc);
         return { text: job.status === 'running' ? '已开始生成论文地图，约一两分钟后写入 Zotero 笔记"论文地图"；完成后可用 paper_map 读取。' : `地图状态：${job.status}`, data: job };
       },
     },
 
+    paper_recognize: {
+      description: "Enhanced recognition of the whole paper with MinerU: formulas as LaTeX, tables with their structure, two columns in reading order, exact boxes of numbered equations. Once done, read_pages, paper_context, paper_outline and page_image use it by themselves. It uploads the PDF (to MinerU's cloud or the user's self-hosted MinerU) and uses the user's quota: call it only when the user explicitly asks in this conversation to recognize this paper — their request is the confirmation, nothing else is asked — never on your own to answer a question. Called again, it reports the state. About half a minute for 20 pages.",
+      schema: { ...paperArg },
+      async run({ docId, itemKey }) {
+        const doc = await ctx.activeDoc(docId, itemKey);
+        const now = await ctx.recognition.status(doc);
+        if (now.state !== 'none' && now.state !== 'failed') return { text: recognitionText(now), data: now };
+        const job = await ctx.recognition.start(doc);
+        return { text: `已开始增强识别《${doc.title}》，20 页约半分钟；完成后读取工具自动使用。`, data: job };
+      },
+    },
+
     reading_guide: {
       description: "Guided reading: the user's reading questions in full (the lens to read this paper with — all answered, the paper is read), which of them are already worked through, and the paper's reading note (\"精读笔记\") so far. Call it once when the user asks to be led through the paper (带我读), and before reading_note_save; also when the user refers to conclusions of an earlier guided reading.",
-      schema: { ...docArg },
-      async run({ docId }) {
-        const doc = await ctx.activeDoc(docId);
+      schema: { ...paperArg },
+      async run({ docId, itemKey }) {
+        const doc = await ctx.activeDoc(docId, itemKey);
         const r = await ctx.readingNotes.read(doc);
         const head = `精读问题（共 ${r.count} 问，已读完 ${r.done.length} 问）：\n${questionsText(r.tpl, r.done)}`;
         const body = r.note ? `\n\n精读笔记（Zotero 笔记 ${r.note.key}，最后整理于 ${r.note.date || '未知'}）：\n${r.text}` : '\n\n这篇论文还没有精读笔记。';
@@ -189,12 +217,12 @@ export function modelTools(ctx) {
     reading_note_save: {
       description: 'Update the paper\'s reading note (one Zotero note per paper, "精读笔记") during guided reading: after a reading question has been worked through with the user, write what was understood and mark the question done. Also when the user asks to keep a discussion as a note. Call reading_guide first in the conversation. sections: the parts of the note to write, each a title and Markdown content; a section with the same title is replaced (merge what it already says), a new title is added at the end, empty content removes it; sections not sent stay as they are. Organise the note your way — by the line of reasoning the reading followed, not one section per question; keep what matters (the problem, why earlier attempts fail, the author\'s idea, the method, what the experiments show, the user\'s own ideas marked "（我）"), with page references [p.N]. done: numbers of the reading questions now worked through.',
       schema: {
-        ...docArg,
+        ...paperArg,
         sections: z.array(z.object({ title: z.string().max(100), content: z.string().describe('Markdown; formulas as $…$, page references as [p.N].') })).max(20).optional(),
         done: z.array(z.number().int().min(1)).max(40).optional().describe('Reading questions now worked through.'),
       },
-      async run({ docId, sections = [], done = [] }) {
-        const doc = await ctx.activeDoc(docId);
+      async run({ docId, itemKey, sections = [], done = [] }) {
+        const doc = await ctx.activeDoc(docId, itemKey);
         const r = await ctx.readingNotes.save(doc, { sections, done });
         const text = `${r.created ? '已新建' : '已更新'}精读笔记（Zotero 笔记 ${r.key}）。`
           + `${r.remaining.length ? `已读完 ${r.done.length} 问；未读到：第 ${r.remaining.join('、')} 问。` : '精读问题已全部读完。'}`;
@@ -203,21 +231,72 @@ export function modelTools(ctx) {
     },
 
     read_pages: {
-      description: 'Repaired text of pages from..to of the paper (ligatures and symbols fixed; formulas may still be garbled — ask the user to box-select a formula for an image if it matters). At most about 40k characters per call.',
-      schema: { ...docArg, from: z.number().int().min(1), to: z.number().int().min(1).optional() },
-      async run({ docId, from, to }) {
-        const doc = await ctx.activeDoc(docId);
+      description: 'Repaired text of pages from..to of the paper (ligatures and symbols fixed; formulas may still be garbled — look at them with page_image when it matters). At most about 40k characters per call.',
+      schema: { ...paperArg, from: z.number().int().min(1), to: z.number().int().min(1).optional() },
+      async run({ docId, itemKey, from, to }) {
+        const doc = await ctx.activeDoc(docId, itemKey);
         const pages = await paper.read(doc, from, to ?? from);
         const text = pages.map(p => (p.truncated ? `=== 第 ${p.page} 页起未返回（超出单次上限，请分次读取）===` : `=== 第 ${p.page} 页（页码 ${p.label}）===\n${p.text}`)).join('\n\n');
-        return { text: `《${doc.title}》\n\n${text}`, data: { pages: pages.map(p => p.page) } };
+        const source = pages[0]?.source === 'mineru' ? '（文字来自增强识别：公式为 LaTeX，表格按行列出，双栏按阅读顺序）\n' : '';
+        return { text: `《${doc.title}》\n${source}\n${text}`, data: { pages: pages.map(p => p.page), source: pages[0]?.source ?? 'glyphs' } };
+      },
+    },
+
+    page_image: {
+      description: 'An image of the original page or part of it, to see a formula, figure or table as printed — use it whenever the extracted text of a formula is unclear or the layout matters, instead of asking the user to box-select. Give one of: equation (its number, e.g. "12"); quote (an exact phrase; the image covers its lines); page with rect; or page alone for the whole page (margins trimmed; good for figures and tables). The reply says which page area the image covers, in points, so a part of it can be asked for again with rect at higher resolution.',
+      schema: {
+        ...paperArg,
+        page: z.number().int().min(1).optional(),
+        equation: z.string().max(12).optional().describe('Equation number as printed, e.g. "12" or "3a".'),
+        quote: z.string().max(4000).optional(),
+        rect: z.array(z.number()).length(4).optional().describe('[x, y, width, height] in page points, origin top-left, as in an earlier page_image reply; needs page.'),
+      },
+      async run({ docId, itemKey, page, equation, quote, rect }) {
+        const doc = await ctx.activeDoc(docId, itemKey);
+        let at, what, latex = null;
+        const recognized = equation && (await ctx.recognition.load(doc));
+        const exact = recognized && equations(recognized).find(e => e.label === equation.replace(/[()\s]/g, '') && (!page || e.page === page) && e.rect);
+        if (exact) {
+          // Enhanced recognition: the equation's exact box (without its number), and its LaTeX.
+          const [x, y, w, h] = exact.rect;
+          [at, what, latex] = [{ page: exact.page, rect: [x - 4, y - 6, w + 8, h + 12] }, `式 (${exact.label})`, exact.latex];
+        } else if (equation) {
+          const label = equation.replace(/[()\s]/g, '');
+          const known = (await buildOutline(doc, ctx)).equations.find(e => e.label === label && (!page || e.page === page));
+          const k = known?.page ?? page;
+          if (!k) throw new Error(`结构索引里没有式 (${label})；可用 find_in_paper 找到它所在的页，再取整页图。`);
+          const box = equationRegion(pageLines(await paper.page(doc, k)), label, known?.y);
+          if (!box) throw new Error(`第 ${k} 页上没找到式 (${label})；可取整页图。`);
+          [at, what] = [{ page: k, rect: box }, `式 (${label})`];
+        } else if (quote) {
+          const loc = await paper.locate(doc, quote, page);
+          const x0 = Math.min(...loc.rects.map(r => r[0])), y0 = Math.min(...loc.rects.map(r => r[1]));
+          const x1 = Math.max(...loc.rects.map(r => r[0] + r[2])), y1 = Math.max(...loc.rects.map(r => r[1] + r[3]));
+          [at, what] = [{ page: loc.page, rect: [x0, y0, x1 - x0, y1 - y0] }, '引文所在处'];
+        } else {
+          if (!page) throw new Error('需要 equation、quote，或 page（可加 rect）。');
+          if (page > doc.pageCount) throw new Error(`页码超出范围（1–${doc.pageCount}）。`);
+          [at, what] = [{ page, rect: rect ?? doc.crops[page - 1] }, rect ? '指定区域' : '整页'];
+        }
+        const img = await ctx.renderer.crop(doc, { page: at.page, rect: at.rect, scale: what === '整页' ? 2 : 3, pad: quote ? 3 : 0 });
+        const region = img.region.map(v => Math.round(v * 10) / 10);
+        // Also kept as a file, for hosts that don't pass tool images to the model (view_image can open it).
+        const dir = join(doc.cacheDir, 'images');
+        const file = join(dir, `p${at.page}-${region.map(Math.round).join('_')}.png`);
+        await mkdir(dir, { recursive: true });
+        await writeFile(file, Buffer.from(img.data, 'base64'));
+        const text = `《${doc.title}》第 ${at.page} 页${what}的原图：${img.width}×${img.height} 像素，覆盖页面区域 [${region.join(', ')}]（pt，左上为原点），每 pt ${Math.round(img.scale * 100) / 100} 像素。`
+          + `\n图片文件：${file}（看不到上面的图片时，用 view_image 打开它）`
+          + (latex ? `\n增强识别给出的 LaTeX（以图为准）：\n$$\n${latex}\n$$` : '');
+        return { text, image: img.data, data: { page: at.page, region, scale: img.scale, width: img.width, height: img.height, file } };
       },
     },
 
     find_in_paper: {
       description: 'Find a word or phrase in the paper; returns pages and short snippets. Case-insensitive; spacing and line-end hyphenation are ignored.',
-      schema: { ...docArg, query: z.string().min(1).max(200) },
-      async run({ docId, query }) {
-        const doc = await ctx.activeDoc(docId);
+      schema: { ...paperArg, query: z.string().min(1).max(200) },
+      async run({ docId, itemKey, query }) {
+        const doc = await ctx.activeDoc(docId, itemKey);
         const hits = await paper.find(doc, query);
         return { text: hits.length ? hits.map(h => `第 ${h.page} 页：${h.snippet}`).join('\n') : `没有找到「${query}」。`, data: { count: hits.length } };
       },
@@ -225,9 +304,9 @@ export function modelTools(ctx) {
 
     list_annotations: {
       description: "The paper's Zotero annotations and earlier AI answers (tag AI问答), in reading order, optionally filtered.",
-      schema: { ...docArg, meaning: meaning.optional(), tag: z.string().optional(), page: z.number().int().min(1).optional() },
-      async run({ docId, meaning: m, tag, page }) {
-        const doc = await ctx.activeDoc(docId);
+      schema: { ...paperArg, meaning: meaning.optional(), tag: z.string().optional(), page: z.number().int().min(1).optional() },
+      async run({ docId, itemKey, meaning: m, tag, page }) {
+        const doc = await ctx.activeDoc(docId, itemKey);
         const { items, error } = await annotations.list(doc);
         const pal = await palette();
         const want = m ? colorOf(pal, m) : null;
@@ -240,7 +319,7 @@ export function modelTools(ctx) {
     annotate: {
       description: 'Create a Zotero annotation on the paper, written in the background (Zotero may ask the user once to allow writing). Locate it by an exact quote from the paper (with page if known) or use the user\'s current selection. To save an answer to a question about a specific place, pass question and answer: it becomes a highlight in the color of the user\'s 问答 tag (purple if there is none) tagged AI问答, whose comment is "问：…\\n答：…"; a second answer at the same place updates that annotation instead of adding one.',
       schema: {
-        ...docArg,
+        ...paperArg,
         quote: z.string().max(4000).optional().describe('Exact text from the paper (a sentence or phrase) to annotate.'),
         page: z.number().int().min(1).optional(),
         use_selection: z.boolean().optional().describe('Annotate what the user has selected in the reader (text or a boxed region).'),
@@ -248,10 +327,10 @@ export function modelTools(ctx) {
         underline: z.boolean().optional(),
         comment: z.string().max(10000).optional(),
         question: z.string().max(1000).optional(),
-        answer: z.string().max(4000).optional().describe(`The core of the answer only: one or two sentences (about 100 Chinese characters, at most ${MAX_ANSWER}), with page references. No restating the question, no background.`),
+        answer: z.string().max(4000).optional().describe('The core of the answer only: usually one or two sentences (about 100 Chinese characters), with page references; longer only when the core needs it. No restating the question, no background.'),
       },
-      async run({ docId, quote, page, use_selection: useSelection, meaning: m, underline, comment = '', question, answer }) {
-        const doc = await ctx.activeDoc(docId);
+      async run({ docId, itemKey, quote, page, use_selection: useSelection, meaning: m, underline, comment = '', question, answer }) {
+        const doc = await ctx.activeDoc(docId, itemKey);
         let sel;
         if (useSelection) {
           // The live selection, else the one the user asked about with the panel's 提问 button.
@@ -264,9 +343,6 @@ export function modelTools(ctx) {
           sel = { kind: 'text', page: at.page, rects: at.rects, text: at.text, offset: at.a };
         }
         const qa = question && answer;
-        if (qa && answer.trim().length > MAX_ANSWER) {
-          throw new Error(`answer 太长（${answer.trim().length} 字）：批注只记核心，请压缩成一两句（约 100 字）后重试；完整解释留在对话里。`);
-        }
         const pal = await palette();
         const color = qa ? qaEntry(pal).color : m ? colorOf(pal, m) : pal[0].color;
         if (qa) {
@@ -286,9 +362,9 @@ export function modelTools(ctx) {
 
     update_annotation: {
       description: "Change an annotation's comment or meaning (color + meaning tag). Edits made in Zotero meanwhile are never overwritten.",
-      schema: { ...docArg, key: KEY, comment: z.string().max(10000).optional(), meaning: meaning.optional() },
-      async run({ docId, key, comment, meaning: m }) {
-        const doc = await ctx.activeDoc(docId);
+      schema: { ...paperArg, key: KEY, comment: z.string().max(10000).optional(), meaning: meaning.optional() },
+      async run({ docId, itemKey, key, comment, meaning: m }) {
+        const doc = await ctx.activeDoc(docId, itemKey);
         await annotations.update(doc, key, { comment, color: m ? colorOf(await palette(), m) : undefined });
         return { text: `已更新批注 ${key}。`, data: { key } };
       },
@@ -296,9 +372,9 @@ export function modelTools(ctx) {
 
     delete_annotation: {
       description: 'Delete an annotation from Zotero (for good, as Zotero itself does; the user can undo with ⌘Z in the reader). Only when the user asks.',
-      schema: { ...docArg, key: KEY },
-      async run({ docId, key }) {
-        const doc = await ctx.activeDoc(docId);
+      schema: { ...paperArg, key: KEY },
+      async run({ docId, itemKey, key }) {
+        const doc = await ctx.activeDoc(docId, itemKey);
         await annotations.remove(doc, key);
         return { text: `已删除批注 ${key}（在阅读器中按 ⌘Z 可恢复）。`, data: { key } };
       },
@@ -326,8 +402,8 @@ export function modelTools(ctx) {
 
     read_notes: {
       description: "The paper's Zotero notes (the user's own and AI-written ones). Without key: the list of notes with their headings. With key: the note as text (formulas as TeX), or only the section whose heading contains `section`. Notes are not the paper: check page references against the paper before relying on them.",
-      schema: { ...docArg, key: KEY.optional(), section: z.string().max(200).optional() },
-      async run({ docId, key, section }) {
+      schema: { ...paperArg, key: KEY.optional(), section: z.string().max(200).optional() },
+      async run({ docId, itemKey, key, section }) {
         if (key) {
           const n = await getNote(key);
           const text = noteText(n.html);
@@ -335,8 +411,8 @@ export function modelTools(ctx) {
           if (part === null) throw new Error(`笔记中没有标题含「${section}」的部分。`);
           return { text: clip(part, 30000), data: { key, chars: part.length } };
         }
-        const doc = await ctx.activeDoc(docId);
-        const notes = doc.itemKey ? await childNotes(doc.itemKey) : [];
+        const parent = itemKey ?? (await ctx.activeDoc(docId)).itemKey;
+        const notes = parent ? await childNotes(parent) : [];
         if (!notes.length) return { text: '这篇论文没有 Zotero 笔记。', data: { notes } };
         const out = [];
         for (const n of notes) {

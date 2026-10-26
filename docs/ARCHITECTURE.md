@@ -42,14 +42,15 @@ Codex 桌面版
 - **选区与提问**：命中判断在面板本地完成；"提问"把修复后的文字和原图裁片作为一条用户消息发到对话。面板随时把论文、页码、选区同步进对话上下文。
 - **批注**：面板立即画出；服务端分配 Zotero key、写入队列持久化，失败按 2/5/15/30/60 秒退避重试；写入前读回 Zotero 中的当前值，被别处改过则标为冲突、不覆盖。面板每 3 秒按版本号增量刷新。
 - **问答批注**：模型回答针对某处的问题后调用 `annotate`，同一处再问时相近的问题替换答案、不同的问题追加。
-- **跳转**：模型调用 `show_location` → 服务端记录导航请求 → 面板轮询取到后滚动并闪框。
-- **论文地图**：用户要求时，服务端准备结构索引与修复后的全文，调用 `codex exec` 生成 Markdown，转成 Zotero 笔记（公式为 Zotero 公式节点，页码与式、图、表转为 `zotero://open-pdf` 链接）。
+- **跳转**：模型调用 `show_location` → 服务端记录导航请求 → 面板轮询取到后滚动并闪框。跳到公式、图、表时，有增强识别结果就闪 MinerU 给的区域（图的子图与图注合为一幅，`src/shared/blocks.mjs`），否则按字形层推断。
+- **调试模式**：⇧M 把这页 MinerU 的全部分块画在页面上，按阅读顺序编号；点一块复制文字、LaTeX、表格 Markdown 或图片 PNG。
+- **论文地图**：用户要求时，服务端准备结构索引与全文（有增强识别结果时用识别后的文字，否则用修复后的字形文字），调用 `codex exec` 生成 Markdown，转成 Zotero 笔记（公式为 Zotero 公式节点，页码与式、图、表转为 `zotero://open-pdf` 链接）。
 - **导读与精读笔记**：模型用 `reading_guide` 读精读问题与已有笔记，一步步引导用户；每读完一个问题调用 `reading_note_save`，按节更新这篇论文的精读笔记，末尾记录阅读进度。
 - **笔记显示**：服务端过滤 Zotero 笔记的 HTML，用 KaTeX 排版公式，交给面板显示。
 
 ## 工具
 
-**模型工具**（`src/server/tools.mjs`）：`reader_state`、`paper_context`、`paper_outline`、`read_pages`、`find_in_paper`、`paper_map`、`paper_map_generate`、`reading_guide`、`reading_note_save`、`list_annotations`、`annotate`、`update_annotation`、`delete_annotation`、`search_annotations`、`read_notes`、`show_location`、`search_library`；打开论文用挂界面资源的 `reader_open`。
+**模型工具**（`src/server/tools.mjs`）：`reader_state`、`paper_context`、`paper_outline`、`read_pages`、`page_image`、`find_in_paper`、`paper_map`、`paper_map_generate`、`reading_guide`、`reading_note_save`、`list_annotations`、`annotate`、`update_annotation`、`delete_annotation`、`search_annotations`、`read_notes`、`show_location`、`search_library`；打开论文用挂界面资源的 `reader_open`。`page_image` 返回原版图像（编号公式、引文所在处、整页或局部），供模型看清公式和图表。读取类工具（除 `show_location`）都可以传 `itemKey` 读文库里任意一篇：服务端在后台打开，不开标签，面板不变。
 
 **面板工具**（`src/server/index.mjs` 的 `appTools`）：面板生命周期、标签页、渲染与文字、批注读写与撤销、笔记、设置等，只供面板调用。
 

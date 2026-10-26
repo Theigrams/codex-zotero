@@ -1,5 +1,6 @@
 // The paper map: generated only when the user asks, by the Codex CLI with gpt-6.1-sol,
-// from the structure index and the repaired full text. It is stored as a Zotero child
+// from the structure index and the full text — the enhanced recognition's when the paper has one (formulas as
+// LaTeX, tables by rows, two columns in reading order), else the repaired glyph text. It is stored as a Zotero child
 // note of the paper ("论文地图", tag 论文地图), whose first line says it is AI-made, by which model, when,
 // for which PDF (fingerprint) and whether it was checked. The Codex session is kept (no --ephemeral).
 import { spawn } from 'node:child_process';
@@ -7,9 +8,9 @@ import { mkdtemp, readFile, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { MAP_PROMPT } from './map-prompt.mjs';
-import { plainText } from './paper.mjs';
 import { childNotes, getNote, noteText } from './notes.mjs';
 import { buildOutline, outlineText } from './outline.mjs';
+import { withRecognized } from './recognition.mjs';
 
 export const MAP_TAG = '论文地图';
 export const MAP_MODEL = process.env.CODEX_ZOTERO_MAP_MODEL || 'gpt-6.1-sol';
@@ -220,9 +221,10 @@ export function runCodex(input, { model = MAP_MODEL, effort = MAP_EFFORT, codex 
 export class PaperMaps {
   // writer: the annotation Writer (authorization and conditional writes); paper, pool: for text and structure.
   // settings(): the user's preferences — mapPrompt / mapModel / mapEffort override the defaults when not empty.
-  constructor({ writer, paper, pool, run = runCodex, now = () => new Date(), settings = async () => ({}) }) {
-    Object.assign(this, { writer, paper, pool, run, now, settings });
-    this.jobs = new Map(); // doc id → { status: 'running'|'failed'|'done', error, startedAt, noteKey, threadId }
+  // recognition: enhanced recognition (status, settled); a recognition under way is waited for.
+  constructor({ writer, paper, pool, recognition = null, run = runCodex, now = () => new Date(), settings = async () => ({}) }) {
+    Object.assign(this, { writer, paper, pool, recognition, run, now, settings });
+    this.jobs = new Map(); // doc id → { status: 'running'|'failed'|'done', stage, error, startedAt, noteKey, threadId }
   }
 
   async find(doc) {
@@ -235,14 +237,34 @@ export class PaperMaps {
 
   status(doc) {
     const job = this.jobs.get(doc.id);
-    return job ? { status: job.status, error: job.error || '', startedAt: job.startedAt, noteKey: job.noteKey || null } : { status: 'idle' };
+    return job ? { status: job.status, ...(job.stage ? { stage: job.stage } : {}), error: job.error || '', startedAt: job.startedAt, noteKey: job.noteKey || null } : { status: 'idle' };
   }
 
-  async material(doc) {
-    const outline = await buildOutline(doc, { pool: this.pool, paper: this.paper });
+  // idx: the enhanced-recognition index, or null.
+  async material(doc, idx = null) {
+    const outline = withRecognized(await buildOutline(doc, { pool: this.pool, paper: this.paper }), idx);
     const pages = [];
-    for (let k = 1; k <= doc.pageCount; k++) pages.push(`=== 第 ${k} 页 ===\n${plainText(await this.paper.page(doc, k))}`);
-    return `【结构索引（程序生成）】\n${outlineText(doc, outline)}\n\n【全文（逐页，文字已修复；公式与表格可能残缺）】\n${pages.join('\n\n')}`;
+    let recognized = 0;
+    for (let k = 1; k <= doc.pageCount; k++) {
+      const { text, source } = await this.paper.pageText(doc, k, idx);
+      if (source) recognized++;
+      pages.push(`=== 第 ${k} 页 ===\n${text}`);
+    }
+    const about = recognized ? '来自增强识别：公式为 LaTeX，表格按行列出，双栏按阅读顺序' : '文字已修复；公式与表格可能残缺';
+    return `【结构索引（程序生成）】\n${outlineText(doc, outline)}\n\n【全文（逐页，${about}）】\n${pages.join('\n\n')}`;
+  }
+
+  // The recognition result to build the map on: waits for one under way (the map is better for it).
+  async recognized(doc, job) {
+    if (!this.recognition) return null;
+    if (['queued', 'running'].includes((await this.recognition.status(doc)).state)) job.stage = '等待增强识别完成';
+    try {
+      return await this.recognition.settled(doc);
+    } catch {
+      return null;
+    } finally {
+      delete job.stage;
+    }
   }
 
   // Starts generating (or regenerating) the map in the background; returns at once.
@@ -260,14 +282,15 @@ export class PaperMaps {
   }
 
   async generate(doc, job) {
+    const idx = await this.recognized(doc, job);
     const prefs = await this.settings();
     const model = prefs.mapModel || MAP_MODEL;
-    const { text, threadId } = await this.run(`${prefs.mapPrompt?.trim() || MAP_PROMPT}\n\n${await this.material(doc)}`, { model, effort: prefs.mapEffort || MAP_EFFORT });
+    const { text, threadId } = await this.run(`${prefs.mapPrompt?.trim() || MAP_PROMPT}\n\n${await this.material(doc, idx)}`, { model, effort: prefs.mapEffort || MAP_EFFORT });
     const found = SECTIONS.filter(s => text.includes(`## ${s}`)).length;
     // With the default prompt the output must have its sections; a custom prompt may shape it differently.
     if (text.length < 200 || (!prefs.mapPrompt?.trim() && found < 4)) throw new Error('模型的输出不像一份论文地图，没有写入 Zotero。');
     const date = this.now().toISOString().slice(0, 10);
-    const outline = await buildOutline(doc, { pool: this.pool, paper: this.paper });
+    const outline = withRecognized(await buildOutline(doc, { pool: this.pool, paper: this.paper }), idx);
     const refs = doc.attachmentKey ? { attachmentKey: doc.attachmentKey, pageCount: doc.pageCount, outline } : null;
     const html = mapNoteHTML(text, { title: doc.title, model, date, fingerprint: doc.fingerprint.slice(0, 12), refs });
     const existing = await this.find(doc);

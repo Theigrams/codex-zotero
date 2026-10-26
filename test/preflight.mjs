@@ -1,18 +1,20 @@
 // Browser preflight of the built panel (standalone server, system Chrome, DPR 2, isolated state).
-//   node test/preflight.mjs --pdf /path/to/paper.pdf [--out DIR] [--headful] [--quick]
+//   node test/preflight.mjs --pdf /path/to/paper.pdf [--out DIR] [--headful] [--quick] [--installation]
 // --quick skips the performance measurements (scroll frame rate, sharpness after scroll and zoom).
+// --installation stops after the general checks (any PDF) and checks glyph repair; the rest needs the CAD fixture.
 // Checks the reading core end to end and prints indicative numbers. Not a substitute for the real Codex panel.
 import puppeteer from 'puppeteer-core';
 import { execFileSync, spawn } from 'node:child_process';
 import { mkdir, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
+import { fakeMinerU } from './fake-mineru.mjs';
 import { fakeZotero } from './fake-zotero.mjs';
 
-// The Python install.mjs would use: CODEX_ZOTERO_PYTHON, else python3, if it can import PyMuPDF.
+// The Python install.mjs would use: CODEX_ZOTERO_PYTHON, else python3, if it can import PyMuPDF and fontTools.
 function pythonWithPyMuPDF() {
   try {
-    return execFileSync(process.env.CODEX_ZOTERO_PYTHON || 'python3', ['-c', 'import sys, pymupdf; print(sys.executable)'], { encoding: 'utf8', stdio: ['ignore', 'pipe', 'ignore'] }).trim();
+    return execFileSync(process.env.CODEX_ZOTERO_PYTHON || 'python3', ['-c', 'import sys, pymupdf, fontTools; print(sys.executable)'], { encoding: 'utf8', stdio: ['ignore', 'pipe', 'ignore'] }).trim();
   } catch {
     return '';
   }
@@ -33,8 +35,10 @@ const QUOTED = encodeURIComponent(JSON.stringify({ attachmentURI: 'http://zotero
 const NOTE = `<div data-schema-version="9"><h1>预检笔记</h1><p>能量 <span class="math">$E = mc^2$</span></p><pre class="math">$$\\mathbf{T} = \\begin{bmatrix}a & b\\\\ c & d\\end{bmatrix}$$</pre>
 ${'<p>段落填充，用于测试滚动位置。</p>'.repeat(120)}<h2>引用</h2><p><span class="highlight" data-annotation="${QUOTED}">“quoted from page 3”</span></p><h2>表格</h2><table><tr><th>符号</th><th>含义</th></tr><tr><td>A</td><td>转角</td></tr></table></div>`;
 const zotero = await fakeZotero({ pdf, title: 'Preflight paper', annotations: [SEED], notes: [NOTE], papers: [{ key: 'PAPER002', attachment: 'ATTACH02', title: 'Second paper', pdf: second }] });
+const mineru = await fakeMinerU({ official: true, key: 'preflight-key' });
 const env = {
   ...process.env, CODEX_ZOTERO_STATE: join(sandbox, 'state'), CODEX_ZOTERO_CACHE: join(sandbox, 'cache'), CODEX_ZOTERO_API: zotero.url,
+  CODEX_ZOTERO_SUPPORT: join(sandbox, 'support'), CODEX_ZOTERO_SECRETS: join(sandbox, 'secrets.json'), CODEX_ZOTERO_MINERU_API: mineru.url,
   CODEX_ZOTERO_CODEX: new URL('./fake-codex.mjs', import.meta.url).pathname, // paper maps without calling a real model
   CODEX_ZOTERO_PYTHON: pythonWithPyMuPDF(), // as install.mjs finds it
   CODEX_ZOTERO_FAST: '1', // short polls and retry backoff: the checks need not sit through the real waits
@@ -170,7 +174,11 @@ try {
   check('0 returns to fit width', (await bar()).zoom === '100%', (await bar()).zoom);
 
   // 4. Render mode switch through the settings drawer.
-  await page.click('#settingsButton');
+  // The toolbar can auto-hide after scrolling; the settings shortcut remains available.
+  await page.keyboard.down('Meta');
+  await page.keyboard.press(',');
+  await page.keyboard.up('Meta');
+  await page.waitForSelector('#settings:not([hidden])');
   await page.click('input[value="rounded"]');
   await until(() => page.evaluate(() => {
     const L = window.__reader.layout[0];
@@ -205,6 +213,11 @@ try {
   await page.waitForFunction(() => window.__reader?.metrics.openSharpMs != null, { timeout: 20000 });
   check('reading position restored after reload', (await bar()).page === before && before.startsWith('12'), `${before} → ${(await bar()).page}`);
 
+  // Installation checks accept any PDF; the full suite below uses its documented CAD fixture.
+  if (process.argv.includes('--installation')) {
+    const repaired = await page.evaluate(async () => (await window.__selection.textFor(1)).repaired);
+    check('installed Python text repair works', repaired);
+  } else {
   // 7. Selection: double-click a word, drag across lines, ⌥-drag a region, ask, context.
   await page.evaluate(() => window.__reader.scrollToPage(1));
   await sleep(1200);
@@ -451,6 +464,22 @@ try {
   check('search_annotations finds annotations across the library with their paper', /《Preflight paper》/.test(sa.text) && /SEEDHL01/.test(sa.text), sa.text?.slice(0, 80) || sa.error);
   const fp = await model('find_in_paper', { query: 'tool orientation' });
   check('find_in_paper lists pages with snippets', /第 \d+ 页：/.test(fp.text), fp.text?.split('\n')[0]);
+  const eqLabel = ((await model('paper_outline')).text?.match(/编号公式：\((\w+)\)/) || [])[1];
+  const eqImg = await model('page_image', { equation: eqLabel });
+  const png = b64 => typeof b64 === 'string' && b64.startsWith('iVBORw0KGgo');
+  check('page_image shows a numbered equation as an image, also kept as a file', png(eqImg.image) && eqImg.data.region[3] < 250 && /view_image/.test(eqImg.text)
+    && (await readFile(eqImg.data.file)).length > 1000, eqImg.text?.split('\n')[0] || eqImg.error);
+  const pageImg = await model('page_image', { page: 2 });
+  check('page_image shows a whole page', png(pageImg.image) && pageImg.data.width > 1000, pageImg.text?.split('\n')[0] || pageImg.error);
+  const zoom = await model('page_image', { page: 2, rect: [100, 100, 200, 80] });
+  check('page_image zooms into a rect', png(zoom.image) && zoom.data.width === 600, zoom.text?.split('\n')[0] || zoom.error);
+  const onScreen = await bar();
+  const tabsBefore = await page.evaluate(() => document.querySelectorAll('.tab').length);
+  const other = await model('read_pages', { itemKey: 'PAPER002', from: 1 });
+  const otherFind = await model('find_in_paper', { itemKey: 'PAPER002', query: 'tool orientation' });
+  const tabsAfter = await page.evaluate(() => document.querySelectorAll('.tab').length);
+  check('reading tools read another paper by item key without opening it', /《Second paper》/.test(other.text) && /第 \d+ 页：/.test(otherFind.text)
+    && tabsAfter === tabsBefore && (await bar()).page === onScreen.page && !/Second paper/.test((await model('reader_state')).text), `${tabsAfter} tabs, ${other.text?.slice(0, 40) || other.error}`);
   const quote = 'singularity can induce dramatic changes in machine axes motion';
   const qa1 = await model('annotate', { quote, page: 1, question: '为什么会剧烈变化？', answer: '奇异点附近逆运动学解急剧变化（第 1 页）。' });
   const qaItem = await until(() => stored().find(a => a.data.tags.some(t => t.tag === 'AI问答')));
@@ -462,7 +491,8 @@ try {
   const mark = await until(() => page.evaluate(() => document.querySelectorAll('.page[data-page="1"] .ann.mark').length), 5000);
   check('AI answers get a margin mark in the panel', mark === 1);
   const long = await model('annotate', { quote, page: 1, question: '展开讲讲', answer: '很长的解释。'.repeat(60) });
-  check('annotate refuses a long answer: comments keep only the core', /太长/.test(long.error || ''), long.error?.slice(0, 40));
+  const kept = await until(() => stored().find(a => a.key === qaItem?.key && a.data.annotationComment.includes('展开讲讲')));
+  check('a long answer is saved as given: brevity is guidance, not a limit', !long.error && !!kept, long.text || long.error);
   const bad = await model('annotate', { quote: 'this sentence is not in the paper anywhere' });
   check('annotate refuses a quote it cannot find', /找不到/.test(bad.error || ''), bad.error);
   const show = await model('show_location', { quote: 'admissible tool orientation annulus', page: 1 });
@@ -654,6 +684,101 @@ try {
   check('each section resets to its default', reset);
   await page.keyboard.press('Escape');
 
+  // Enhanced recognition: the key goes to the keychain (a file here), the icon starts it, the tools use the result.
+  await page.keyboard.down('Meta');
+  await page.keyboard.press('Digit1');
+  await page.keyboard.up('Meta');
+  const recShown = await until(() => page.evaluate(() => window.__reader.doc?.title === 'Preflight paper' && !document.getElementById('recButton').hidden));
+  check('the grey icon offers recognition and says a key is still needed', recShown && await page.$eval('#recButton', b => /还没有 MinerU Key/.test(b.title) && !b.classList.contains('done')));
+  await page.evaluate(() => document.getElementById('recButton').click()); // the bar may have slid away while reading
+  const keyPrompt = await until(() => page.evaluate(() => !document.getElementById('recPop').hidden && document.getElementById('settings').hidden && document.activeElement?.id === 'recPopKey'));
+  check('clicking it without a key asks for one under the icon, not in the settings', !!keyPrompt);
+  await page.evaluate(() => document.getElementById('bar').classList.remove('hidden'));
+  await page.screenshot({ path: `${outDir}/11-key-prompt.png`, clip: { x: 626, y: 0, width: 400, height: 220 } });
+  await page.type('#recPopKey', 'wrong-key');
+  await page.keyboard.press('Enter');
+  const refusedKey = await until(() => page.$eval('#recPopSay', n => n.textContent));
+  const before = JSON.parse(await readFile(env.CODEX_ZOTERO_SECRETS, 'utf8').catch(() => '{}'));
+  check('a key the service refuses is checked first and not saved', /Key 无效/.test(refusedKey || '') && !before.mineru && mineru.puts() === 0, refusedKey || '');
+  await page.$eval('#recPopKey', i => { i.value = ''; });
+  await page.type('#recPopKey', 'preflight-key');
+  await page.click('#recPop .eye');
+  const shownKey = await page.$eval('#recPopKey', i => i.type === 'text' && document.activeElement === i);
+  await page.keyboard.press('Enter');
+  const recDone = await until(() => page.$eval('#recButton', b => b.classList.contains('done') && b.title), 15000);
+  const toastText = await page.$eval('#toast', t => t.textContent);
+  await page.evaluate(() => document.getElementById('bar').classList.remove('hidden'));
+  await page.screenshot({ path: `${outDir}/12-recognized.png`, clip: { x: 626, y: 0, width: 400, height: 60 } });
+  const secretFile = JSON.parse(await readFile(env.CODEX_ZOTERO_SECRETS, 'utf8').catch(() => '{}'));
+  const leaked = await page.evaluate(() => document.documentElement.outerHTML.includes('preflight-key') || document.getElementById('recPopKey').value !== '');
+  check('the eye shows the key; a good key is saved on the server side and the paper recognized; the icon turns blue',
+    shownKey && !!recDone && /钥匙串/.test(toastText) && secretFile.mineru === 'preflight-key' && !leaked && mineru.puts() === 1 && !mineru.log.some(l => l.includes('WITH KEY')),
+    `${shownKey} ${recDone || await page.$eval('#recButton', b => `${b.className} ${b.title}`)} ${toastText} ${secretFile.mineru?.length} ${leaked}`);
+  await page.evaluate(() => document.getElementById('settingsButton').click());
+  await until(() => page.evaluate(() => !document.getElementById('settings').hidden));
+  const settingsKey = await page.$eval('#recKey', i => i.placeholder.startsWith('已设置') && i.value === '' && !!i.closest('.secret').querySelector('.eye svg') && !document.getElementById('recAuto').checked);
+  await page.click('#recTest');
+  const tested = await until(() => page.evaluate(() => !document.getElementById('toast').hidden && /测试通过/.test(document.getElementById('toast').textContent) && document.getElementById('toast').textContent));
+  check('the settings show the key as set, with an eye; 测试连接 checks it without uploading', settingsKey && /Key 有效/.test(tested || '') && mineru.puts() === 1, `${settingsKey} ${tested}`);
+  await page.type('#recSelfUrl', 'http://example.org');
+  await page.keyboard.press('Tab');
+  const refusedUrl = await until(() => page.$eval('#recNote', n => /https/.test(n.textContent) && n.textContent));
+  await page.$eval('#recSelfUrl', i => { i.value = ''; });
+  check('a self-hosted address without https is refused (the key would travel in the clear)', !!refusedUrl, refusedUrl || '');
+  await page.keyboard.press('Escape');
+  const enhanced = await model('read_pages', { from: 1 });
+  check('read_pages then reads the recognized text', /增强识别/.test(enhanced.text) && /Recognized paragraph/.test(enhanced.text), enhanced.text?.slice(0, 80) || enhanced.error);
+  const eqTex = await model('page_image', { equation: '12' });
+  check('page_image gives the recognized LaTeX with the exact box', /\\Theta_j\^\*/.test(eqTex.text) && eqTex.data?.page === 1, eqTex.text?.split('\n')[0] || eqTex.error);
+  // A jump onto a recognized equation outlines MinerU's box; the debug view shows every block, a click copies it.
+  const recBlocks = await page.evaluate(async () => (await (await fetch('/api/call', { method: 'POST', body: JSON.stringify({ name: 'recognition_page', arguments: { docId: window.__reader.doc.id, page: 1 } }) })).json()).blocks);
+  const eqBlock = recBlocks?.find(b => b.labels?.includes('12'));
+  await page.evaluate(y => { document.querySelectorAll('.flash').forEach(n => n.remove()); window.__links.follow({ page: 1, point: [null, y] }); }, eqBlock.rect[1] + 3);
+  const flashed = await until(() => page.evaluate(([x, y, w, h]) => {
+    const n = document.querySelector('.page[data-page="1"] .flash');
+    if (!n) return null;
+    const [rx, ry, rw, rh] = window.__reader.region(0);
+    const want = [(x - rx) / rw, (y - ry) / rh, w / rw, h / rh].map(v => v * 100);
+    const got = ['left', 'top', 'width', 'height'].map(k => parseFloat(n.style[k]));
+    return got.every((v, i) => Math.abs(v - want[i]) < 0.05) ? 'same' : `${got.map(v => v.toFixed(1))} vs ${want.map(v => v.toFixed(1))}`;
+  }, eqBlock.rect), 4000);
+  check('a jump onto a recognized equation outlines the box MinerU found', flashed === 'same', String(flashed));
+  await page.evaluate(() => {
+    window.__copied = [];
+    navigator.clipboard.writeText = async t => { window.__copied.push(t); };
+    navigator.clipboard.write = async items => { window.__copied.push(items[0].types.join()); };
+  });
+  await page.keyboard.down('Shift');
+  await page.keyboard.press('KeyM');
+  await page.keyboard.up('Shift');
+  const shownBlocks = await until(() => page.evaluate(() => document.querySelectorAll('.page[data-page="1"] .blocks .blk').length));
+  const labels = await page.$$eval('.page[data-page="1"] .blk', ns => ns.map(n => n.dataset.label));
+  const group = await page.$$eval('.page[data-page="1"] .grp', ns => ns.map(n => n.dataset.label));
+  check('⇧M shows every recognized block, numbered in reading order, and the figure its parts form', shownBlocks === recBlocks.length && labels[3] === '4 公式 (12)' && group[0] === '图 1（2 块合并）',
+    `${shownBlocks}/${recBlocks.length} ${labels.join(' · ')} ${group}`);
+  const clickBlock = async i => {
+    const n = await page.evaluate(() => window.__copied.length);
+    const box = await (await page.$(`.page[data-page="1"] .blk[data-i="${i}"]:not(.cap)`)).boundingBox();
+    await page.mouse.click(box.x + box.width / 2, box.y + box.height / 2);
+    return until(() => page.evaluate(k => window.__copied.length > k && window.__copied.at(-1), n), 4000);
+  };
+  const eqCopied = await clickBlock(recBlocks.indexOf(eqBlock));
+  const copyToast = await page.$eval('#toast', t => t.textContent);
+  const noSelection = await page.evaluate(() => !window.__selection.current);
+  const tableCopied = await clickBlock(recBlocks.findIndex(b => b.type === 'table'));
+  const imageCopied = await clickBlock(recBlocks.findIndex(b => b.type === 'chart'));
+  check('clicking a block copies it: the LaTeX, the table as Markdown, the figure as a picture — and selects nothing',
+    /^\\Phi\^\*\(u\).*\\tag\{12\}$/.test(eqCopied || '') && /公式 LaTeX/.test(copyToast) && noSelection && tableCopied === '| A | 2 |\n| --- | --- |\n| C | 5 |' && imageCopied === 'image/png',
+    JSON.stringify([eqCopied, copyToast, noSelection, tableCopied, imageCopied]));
+  await page.screenshot({ path: `${outDir}/13-blocks.png` });
+  await page.keyboard.down('Shift');
+  await page.keyboard.press('KeyM');
+  await page.keyboard.up('Shift');
+  check('⇧M again hides them', await until(() => page.evaluate(() => !document.querySelector('.blk'))));
+  const asked = await model('paper_recognize', { itemKey: 'PAPER002' });
+  const askedDone = await until(async () => /已有增强识别结果/.test((await model('paper_recognize', { itemKey: 'PAPER002' })).text || ''), 10000);
+  check('paper_recognize (the user asked for it) recognizes another paper in the background, without asking again', /已开始增强识别/.test(asked.text || '') && askedDone, asked.text || asked.error);
+
   await page.evaluate(() => document.getElementById('newTab').click()); // the bar may have slid away while reading
   await sleep(500);
   const recent = await page.$$eval('#homeList li b', els => els.map(e => e.textContent));
@@ -661,7 +786,7 @@ try {
   check('the conversation context says the panel is on the home page', homeContext);
   const onHome = await until(async () => /首页/.test((await model('reader_state')).text || ''), 4000);
   check('reader_state says the panel is on the home page', onHome);
-  check('home lists the papers being read', recent.includes('Preflight paper'), JSON.stringify(recent));
+  check('home lists the papers being read, not one only read in the background', recent.includes('Preflight paper') && !recent.includes('Second paper'), JSON.stringify(recent));
   await page.type('#search', 'second');
   await until(() => page.evaluate(() => document.getElementById('homeHeading').textContent === 'Zotero' && document.querySelectorAll('#homeList li').length === 1));
   await page.keyboard.press('Enter');
@@ -689,11 +814,13 @@ try {
   const superseded = await until(() => page.$eval('#messageText', el => el.textContent.includes('新的面板') && el.textContent), 6000) || await page.$eval('#messageText', el => el.textContent);
   check('older panel steps aside', superseded.includes('新的面板'), superseded);
 
+  }
+
   check('no page errors', errors.length === 0, errors.join(' | '));
   const report = { checks, scroll, zoomed, layout, rounded };
   await writeFile(`${outDir}/report.json`, JSON.stringify(report, null, 1));
 } catch (e) {
-  check('preflight ran to the end', false, e.message);
+  check('preflight ran to the end', false, e.stack || e.message);
 } finally {
   for (const c of checks) console.log(`${c.ok ? 'ok  ' : 'FAIL'} ${String(((c.ms ?? 0) / 1000).toFixed(1)).padStart(5)}s ${c.name}${c.detail ? `  — ${c.detail}` : ''}`);
   console.log(`total ${((Date.now() - startedAt) / 1000).toFixed(0)}s`);
@@ -701,5 +828,6 @@ try {
   await browser.close();
   server.kill();
   await zotero.close();
+  mineru.close();
   await rm(sandbox, { recursive: true, force: true });
 }

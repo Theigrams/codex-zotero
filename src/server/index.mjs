@@ -21,6 +21,8 @@ import { buildOutline } from './outline.mjs';
 import { PaperMaps } from './map.mjs';
 import { ReadingNotes } from './reading.mjs';
 import { Paper } from './paper.mjs';
+import { Recognition } from './recognition.mjs';
+import { Secrets } from './secrets.mjs';
 import { State } from './state.mjs';
 import { TextService } from './text.mjs';
 import { modelTools } from './tools.mjs';
@@ -38,6 +40,10 @@ const documents = new Documents({
 const renderer = new Renderer(pool);
 const stateRoot = process.env.CODEX_ZOTERO_STATE || join(homedir(), '.codex', 'codex-zotero');
 const state = new State(stateRoot);
+// What must not be lost and cannot be rebuilt: enhanced-recognition results.
+const supportRoot = process.env.CODEX_ZOTERO_SUPPORT || join(homedir(), 'Library', 'Application Support', 'codex-zotero');
+const secrets = new Secrets();
+const recognition = new Recognition({ root: supportRoot, secrets, settings: () => state.prefs(), ...(process.env.CODEX_ZOTERO_FAST === '1' ? { poll: 200 } : {}) });
 // CODEX_ZOTERO_FAST=1 (the browser preflight only): shorter waits everywhere, so the checks need not sit through
 // the real 3-second polls and 2-second retry backoff.
 const FAST = process.env.CODEX_ZOTERO_FAST === '1';
@@ -49,8 +55,8 @@ const text = new TextService({
   python: process.env.CODEX_ZOTERO_PYTHON || '',
 });
 
-const paper = new Paper(text);
-const maps = new PaperMaps({ writer: annotations.writer, paper, pool, settings: () => state.prefs() });
+const paper = new Paper(text, { enhanced: doc => recognition.load(doc) });
+const maps = new PaperMaps({ writer: annotations.writer, paper, pool, recognition, settings: () => state.prefs() });
 const readingNotes = new ReadingNotes({ writer: annotations.writer, paper, pool, settings: () => state.prefs() });
 
 const linkCache = new Map();
@@ -110,8 +116,22 @@ function warm(doc) {
   }, 4000).unref?.();
 }
 
+// With the master switch on, every paper shown in the reader is recognized once, in the background.
+async function autoRecognize(doc) {
+  if (!(await state.prefs()).recognition.auto) return;
+  if ((await recognition.status(doc)).state !== 'none' || !(await recognition.ready())) return;
+  await recognition.start(doc);
+}
+
+// Turning the switch on (or adding a key while it is on) includes the paper on screen.
+function onScreenRecognize() {
+  const doc = live?.docId && documents.byId.get(live.docId);
+  if (doc) autoRecognize(doc).catch(() => {});
+}
+
 async function opened(doc) {
   warm(doc);
+  autoRecognize(doc).catch(() => {});
   const record = await state.document(doc.id);
   return { document: summary(doc), position: record?.position ?? null };
 }
@@ -136,8 +156,10 @@ async function paperTab() {
   return recent.find(r => papers.includes(r.id))?.id ?? papers.at(-1);
 }
 
-async function activeDoc(docId) {
+// itemKey: another Zotero paper, opened in the background — no tab, not in the reading list, the screen stays.
+async function activeDoc(docId, itemKey) {
   if (docId) return docById(docId);
+  if (itemKey) return [...documents.byId.values()].find(d => d.itemKey === itemKey) ?? documents.open(await resolvePdf({ itemKey }));
   const id = live?.docId || (await paperTab());
   if (!id) throw new Error('阅读器里没有打开的论文；先用 search_library 找到论文，再用 reader_open 打开。');
   return docById(id);
@@ -149,7 +171,10 @@ async function navigate(doc, target) {
   return Date.now() - lastPoll < 5000;
 }
 
-const ctx = { annotations, maps, readingNotes, paper, pool, state, docById, activeDoc, paperTab, tabsView, view: () => view, navigate, searchLibrary, searchAnnotations, live: () => live, asked: () => asked };
+// The panel's view of the preferences: which keys are set, never the keys themselves.
+const prefsView = async () => ({ ...(await state.prefs()), secrets: await secrets.which() });
+
+const ctx = { annotations, maps, readingNotes, paper, pool, renderer, recognition, state, docById, activeDoc, paperTab, tabsView, view: () => view, navigate, searchLibrary, searchAnnotations, live: () => live, asked: () => asked };
 const forModel = modelTools(ctx);
 
 const CAPTION_KIND = { fig: '图', tab: '表', alg: '算法' };
@@ -175,12 +200,27 @@ const appTools = {
         error = e.message;
       }
     }
-    return { prefs: await state.prefs(), ...view, active, error, navSeq: nav.seq, ...(FAST ? { timing: { navPollMs: 200, annotationsPollMs: 300, mapPollMs: 300 } } : {}) };
+    return { prefs: await prefsView(), ...view, active, error, navSeq: nav.seq, ...(FAST ? { timing: { navPollMs: 200, annotationsPollMs: 300, mapPollMs: 300 } } : {}) };
   },
-  async panel_poll({ instance, seen = 0 }) {
+  async panel_poll({ instance, seen = 0, docId }) {
     const superseded = activeInstance !== null && instance !== activeInstance;
     if (!superseded) lastPoll = Date.now();
-    return { superseded, nav: !superseded && nav.seq > seen ? nav : null };
+    const doc = docId && documents.byId.get(docId);
+    return { superseded, nav: !superseded && nav.seq > seen ? nav : null, ...(doc ? { recognition: await recognition.status(doc) } : {}) };
+  },
+  // The status icon: recognize this paper now (the user clicked it).
+  async recognition_start({ docId }) {
+    return { recognition: await recognition.start(documents.get(docId)) };
+  },
+  // The settings' 测试 button and the key prompt: does the backend answer, and take the key? Sends no file.
+  async recognition_test({ backend, key, url }) {
+    if (!['self', 'official'].includes(backend)) throw new Error('未知的识别后端。');
+    return recognition.test({ backend, key, url });
+  },
+  async secret_set({ name, value }) {
+    await secrets.set(name, value);
+    onScreenRecognize();
+    return { prefs: await prefsView() };
   },
   async tab_open({ docId, itemKey }) {
     if (docId?.startsWith('note:')) {
@@ -257,7 +297,14 @@ const appTools = {
     return { saved: true };
   },
   async prefs_set(patch) {
-    return { prefs: await state.setPrefs(patch) };
+    await state.setPrefs(patch);
+    if (patch.recognition) onScreenRecognize();
+    return { prefs: await prefsView() };
+  },
+  // The recognized blocks of a page (null when the paper isn't recognized): jumps outline what MinerU found,
+  // and the debug view shows them all.
+  async recognition_page({ docId, page }) {
+    return { blocks: await recognition.page(documents.get(docId), page) };
   },
   async page_text({ docId, page }) {
     return text.page(documents.get(docId), page);
@@ -313,7 +360,10 @@ const selectionSchema = z.object({
 });
 const appSchemas = {
   panel_hello: { instance: z.string().max(40) },
-  panel_poll: { instance: z.string().max(40), seen: z.number().int().min(0).optional() },
+  panel_poll: { instance: z.string().max(40), seen: z.number().int().min(0).optional(), docId: z.string().optional() },
+  recognition_start: { docId: z.string() },
+  recognition_test: { backend: z.enum(['self', 'official']), key: z.string().max(4096).optional(), url: z.string().max(2048).optional() },
+  secret_set: { name: z.enum(['mineru', 'mineru-self']), value: z.string().max(4096) },
   tab_open: { docId: z.string().optional(), itemKey: z.string().regex(/^[A-Z0-9]{8}$/).optional() },
   tab_close: { docId: z.string() },
   tab_order: { tabs: z.array(z.string()).max(20), active: z.string().nullable() },
@@ -342,8 +392,10 @@ const appSchemas = {
     palette: z.array(z.object({ color: z.string(), tag: z.string() })).max(9).nullable().optional(),
     keys: z.record(z.string(), z.string().nullable()).optional(),
     mapPrompt: z.string().max(20000).optional(), mapModel: z.string().max(60).optional(), mapEffort: z.enum(['', 'low', 'medium', 'high']).optional(), readingQuestions: z.string().max(20000).optional(),
+    recognition: z.object({ auto: z.boolean().optional(), selfUrl: z.string().max(500).optional(), fallback: z.boolean().optional() }).optional(),
   },
   page_text: { docId: z.string(), page: z.number().int().min(1) },
+  recognition_page: { docId: z.string(), page: z.number().int().min(1) },
   selection_image: { docId: z.string(), page: z.number().int().min(1), rect, scale: z.number().positive().max(3).optional() },
   page_links: { docId: z.string(), page: z.number().int().min(1) },
   annotations_list: { docId: z.string(), since: z.string().optional() },
@@ -426,7 +478,6 @@ if (argv.includes('--standalone')) {
   const server = new McpServer({ name: 'codex-zotero', version: '0.1.0' });
   const ok = (data, text = 'ok') => ({ content: [{ type: 'text', text }], structuredContent: data });
   const fail = e => ({ isError: true, content: [{ type: 'text', text: e.message }] });
-
   registerAppResource(server, 'reader', URI, { mimeType: RESOURCE_MIME_TYPE }, async () => ({
     contents: [{
       uri: URI, mimeType: RESOURCE_MIME_TYPE, text: await readFile(join(here, 'panel.html'), 'utf8'),
@@ -456,6 +507,8 @@ if (argv.includes('--standalone')) {
   });
 
   for (const [name, run] of Object.entries(appTools)) {
+    // Without a schema the host's arguments never reach the tool (the preflight's HTTP path doesn't show it).
+    if (!appSchemas[name]) throw new Error(`panel tool ${name} has no input schema`);
     registerAppTool(server, name, {
       description: `Reader panel internal: ${name}`, inputSchema: appSchemas[name],
       _meta: { ui: { resourceUri: URI, visibility: ['app'] } },
@@ -472,7 +525,9 @@ if (argv.includes('--standalone')) {
     server.registerTool(name, { description: tool.description, inputSchema: tool.schema }, async args => {
       try {
         const r = await tool.run(args);
-        return ok(r.data ?? {}, r.text);
+        const out = ok(r.data ?? {}, r.text);
+        if (r.image) out.content.push({ type: 'image', data: r.image, mimeType: 'image/png' });
+        return out;
       } catch (e) {
         return fail(e);
       }

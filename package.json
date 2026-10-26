@@ -6,6 +6,7 @@
   "scripts": {
     "build": "node build.mjs",
     "test": "node --test test/*.test.mjs",
+    "check": "node --test test/repo.test.mjs",
     "preflight": "node test/preflight.mjs",
     "install-plugin": "node install.mjs",
     "uninstall-plugin": "node uninstall.mjs"

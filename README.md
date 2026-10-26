@@ -32,9 +32,10 @@
 **笔记**
 - 在面板里打开 Zotero 笔记：公式、表格、图片、目录；笔记里引用的高亮、页码可以点回论文原处。
 - **论文地图**（你要求时才生成）：由 Codex CLI 调用模型通读全文，写一份带页码的导航笔记，存进 Zotero。
+- **增强识别**（可选，默认关闭）：填入 MinerU 的 Key（或你自部署的 MinerU 地址）后，点顶栏图标把论文交给 MinerU 识别；之后 Codex 读到的公式是 LaTeX、表格按行列、双栏按阅读顺序。结果存在本机，每篇只识别一次。
 - **导读**：对 Codex 说"带我读这篇"，它会带着一组精读问题（可在设置里改）一步一步引导你思考；每读完一个问题，结论记进这篇论文的"精读笔记"，下次接着读。
 
-**给 Codex 的工具**：`reader_state`、`paper_context`、`paper_outline`、`read_pages`、`find_in_paper`、`paper_map`、`reading_guide`、`list_annotations`、`annotate`、`search_annotations`、`read_notes`、`show_location`、`search_library` 等，配有一份 skill 说明何时用哪个。
+**给 Codex 的工具**：`reader_state`、`paper_context`、`paper_outline`、`read_pages`、`page_image`（公式、图表的原版图像）、`paper_recognize`（增强识别，需你确认）、`find_in_paper`、`paper_map`、`reading_guide`、`list_annotations`、`annotate`、`search_annotations`、`read_notes`、`show_location`、`search_library` 等，配有一份 skill 说明何时用哪个。
 
 ## 环境要求
 
@@ -45,7 +46,7 @@
 | Zotero | 测试于 Zotero 10.0.6；需要开启本地 API（设置 → 高级 → "允许此计算机上的其他应用程序与 Zotero 通信"） |
 | Xcode 命令行工具 | 编译 PDFKit 辅助程序（`swiftc`）：`xcode-select --install` |
 | Node.js 20+ 与 npm | 只在构建、安装时使用；插件运行用 Codex 自带的 Node |
-| Python 3 + PyMuPDF | 可选，用于修复 PDF 文字中的连字和符号：`python3 -m pip install pymupdf`。没有它也能用 |
+| Python 3 + PyMuPDF、fontTools | 可选，用于修复 PDF 文字中的连字和符号：`python3 -m pip install pymupdf fonttools`。没有它们也能用 |
 
 ## 安装
 
@@ -58,7 +59,7 @@ npm run install-plugin
 
 然后完全退出 Codex（⌘Q）再打开，对 Codex 说"打开 Zotero 阅读器"。
 
-安装脚本会编译辅助程序、找到装了 PyMuPDF 的 Python、把笔记与公式用的字体（KaTeX、Lora）装进 `~/Library/Fonts`，并把插件注册到 Codex。每一步的说明、验证方法和常见问题见 [INSTALL.md](INSTALL.md)；也可以把 INSTALL.md 交给你的 agent，让它照着装。
+安装脚本会编译辅助程序、找到装了 PyMuPDF 和 fontTools 的 Python、把笔记与公式用的字体（KaTeX、Lora）装进 `~/Library/Fonts`，并把插件注册到 Codex。每一步的说明、验证方法和常见问题见 [INSTALL.md](INSTALL.md)；也可以把 INSTALL.md 交给你的 agent，让它照着装。
 
 ## 使用
 
@@ -66,7 +67,7 @@ npm run install-plugin
 
 
 - 打开论文：对 Codex 说"打开那篇关于……的论文"，或在阅读器首页搜索。
-- 设置：⌘,（渲染方式、批注颜色与标签、快捷键、论文地图的模型 / 推理强度 / 提示词、精读问题）。
+- 设置：⌘,（渲染方式、批注颜色与标签、快捷键、论文地图的模型 / 推理强度 / 提示词、增强识别、精读问题）。
 - 常用按键：H 高亮、1–9 换颜色（加 ⇧ 为下划线）、A 批注抽屉、G 跳页、⌘F 查找、⌥← / ⌥→ 返回 / 前进、=/-/0 缩放、C 裁边 / 原始页面、⌘Z 恢复刚删除的批注。除 1–9、Esc、⌘C、⌘1–9 外都可在设置里改。
 
 ## 数据与隐私
@@ -85,7 +86,7 @@ npm run uninstall-plugin
 
 ## 开发
 
-见 [AGENTS.md](AGENTS.md)（构建、测试、代码约定）和 [docs/](docs/)（架构、渲染、配置）。
+见 [AGENTS.md](AGENTS.md)（构建、测试、代码约定）和 [docs/](docs/)（架构、渲染、配置）。提 issue 或 PR 之前，请先读 [CONTRIBUTING.md](CONTRIBUTING.md) 里已经决定不做的方向。
 
 ## 许可
 

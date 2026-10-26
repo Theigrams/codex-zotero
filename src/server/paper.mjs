@@ -8,8 +8,11 @@ const MAX_READ_CHARS = 40000;
 export const plainText = page => page.t.join('').replace(/-\n/g, '').replace(/[ \t]+/g, ' ').replace(/ ?\n ?/g, '\n').trim();
 
 export class Paper {
-  constructor(text) {
+  // enhanced(doc): the enhanced-recognition index when there is one (recognition.mjs); reading prefers its text,
+  // while finding and locating quotes always use the glyph layer, whose positions match the page.
+  constructor(text, { enhanced = async () => null } = {}) {
     this.text = text;
+    this.enhanced = enhanced;
   }
 
   page(doc, k) {
@@ -17,18 +20,26 @@ export class Paper {
     return this.text.page(doc, k);
   }
 
+  // A page's text: the recognized one (idx: the enhanced-recognition index) when it has any; a page the
+  // recognition left empty (a blank or failed page) falls back to the glyph layer. → { text, source? }
+  async pageText(doc, k, idx) {
+    const t = idx?.pages[k - 1]?.text;
+    return t?.trim() ? { text: t, source: 'mineru' } : { text: plainText(await this.page(doc, k)) };
+  }
+
   async read(doc, from, to = from) {
     const a = Math.max(1, Math.min(from, to)), z = Math.min(doc.pageCount, Math.max(from, to));
     const pages = [];
     let used = 0;
+    const idx = await this.enhanced(doc).catch(() => null);
     for (let k = a; k <= z; k++) {
-      const text = plainText(await this.page(doc, k));
+      const { text, source } = await this.pageText(doc, k, idx);
       if (used && used + text.length > MAX_READ_CHARS) {
         pages.push({ page: k, label: doc.pages[k - 1].label, truncated: true, text: '' });
         break;
       }
       used += text.length;
-      pages.push({ page: k, label: doc.pages[k - 1].label, text });
+      pages.push({ page: k, label: doc.pages[k - 1].label, text, ...(source ? { source } : {}) });
     }
     return pages;
   }

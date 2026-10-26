@@ -7,12 +7,12 @@
 <style>
   /* BUNDLED_KATEX */
   :root {
-    --bg: #ffffff; --text: #1f1f1d; --muted: #6e6e68; --line: #e2e1dc; --gap: #d9d8d2; --hover: #f2f1ee; --accent: #2f5bd3;
+    --bg: #ffffff; --text: #1f1f1d; --muted: #6e6e68; --line: #e2e1dc; --gap: #d9d8d2; --hover: #f2f1ee; --accent: #2f5bd3; --warn: #c0392b; --ok: #2e7d32;
     --bar-h: 28px; color-scheme: light dark;
   }
   @media (prefers-color-scheme: dark) {
     :root:not([data-theme="light"]) {
-      --bg: #1e1e1d; --text: #e8e8e3; --muted: #9d9d96; --line: #383836; --gap: #2c2c2a; --hover: #2a2a28; --accent: #8aa6ff;
+      --bg: #1e1e1d; --text: #e8e8e3; --muted: #9d9d96; --line: #383836; --gap: #2c2c2a; --hover: #2a2a28; --accent: #8aa6ff; --warn: #ff7b6b; --ok: #7bc47f;
     }
   }
   * { box-sizing: border-box; }
@@ -198,6 +198,22 @@
   #back { color: var(--accent); padding: 2px 6px; border-radius: 3px; }
   #back:hover { background: var(--hover); }
   .flash { position: absolute; outline: 2px solid var(--accent); outline-offset: 2px; border-radius: 1px; }
+  /* Debug view (⇧M): every block MinerU found, numbered in its reading order; a click copies it. */
+  .blocks { position: absolute; inset: 0; }
+  .blk { --b: #3b7ddd; position: absolute; pointer-events: auto; cursor: copy; border: 1px solid var(--b); background: color-mix(in srgb, var(--b) 8%, transparent); }
+  .blk:hover { background: color-mix(in srgb, var(--b) 22%, transparent); }
+  .blk::before { content: attr(data-label); position: absolute; left: -1px; top: -1px; padding: 0 3px; border-radius: 0 0 3px 0; background: var(--b); color: #fff;
+    font: 600 9px/12px -apple-system, sans-serif; white-space: nowrap; opacity: .9; }
+  .blk.t-title { --b: #8e44ad; }
+  .blk.t-equation { --b: #e67e22; }
+  .blk:is(.t-image, .t-chart, .cap) { --b: #27ae60; }
+  .blk.t-table { --b: #16a085; }
+  .blk:is(.t-ref_text, .t-list, .t-code, .t-algorithm) { --b: #7f8c8d; }
+  .blk:is(.t-header, .t-footer, .t-page_number, .t-page_footnote, .t-aside_text) { --b: #a0a0a0; border-style: dashed; }
+  .blk.cap { border-style: dashed; }
+  .grp { position: absolute; outline: 2px dashed #27ae60; outline-offset: 3px; }
+  .grp::after { content: attr(data-label); position: absolute; right: -3px; bottom: -3px; transform: translateY(100%); padding: 0 3px; background: #27ae60; color: #fff;
+    font: 600 9px/12px -apple-system, sans-serif; white-space: nowrap; }
   #note { color: var(--muted); }
   #bar .meta { color: var(--muted); padding: 2px 4px; border-radius: 3px; }
   #bar .meta:hover { background: var(--hover); color: var(--text); }
@@ -205,6 +221,38 @@
     border-radius: 3px; padding: 0 4px; height: 20px; }
   .icon { display: grid; place-items: center; width: 22px; height: 22px; border-radius: 3px; color: var(--muted); }
   .icon:hover { background: var(--hover); color: var(--text); }
+  /* Enhanced recognition: grey sparkles = not yet (click to recognize), hourglass = under way (no animation),
+     sparkles in the accent colour = in use, red warning = failed (click to retry). The words are in the tooltip. */
+  #recButton .wait, #recButton .warn { display: none; }
+  #recButton.running .spark, #recButton.failed .spark { display: none; }
+  #recButton.running .wait, #recButton.failed .warn { display: inline; }
+  #recButton.done, #recButton.done:hover { color: var(--accent); }
+  #recButton.done .spark { fill: currentColor; }
+  #recButton.failed, #recButton.failed:hover { color: var(--warn); }
+
+  /* The key prompt under the icon, when recognition has no key yet (or the key was refused). */
+  #recPop { position: absolute; top: calc(var(--bar-h) + 4px); right: 8px; z-index: 4; width: min(320px, calc(100vw - 16px)); padding: 10px 12px;
+    background: var(--bg); border: 1px solid var(--line); border-radius: 6px; box-shadow: 0 4px 16px rgba(0, 0, 0, .12); }
+  #recPop p { margin: 0 0 8px; }
+  #recPop small { display: block; color: var(--muted); font-size: 12px; margin-top: 6px; }
+  #recPop .row { display: flex; align-items: center; gap: 8px; margin-top: 8px; }
+  #recPop .spacer { flex: 1; }
+  #recPop .link { color: var(--accent); }
+  #recPop .primary { color: var(--accent); font-weight: 600; }
+  #recPop .say { margin-top: 6px; font-size: 12px; color: var(--warn); }
+  #recPop .say:empty { display: none; }
+  /* A key field with an eye: shows what is being typed (a saved key never comes back). */
+  .secret { flex: 1; display: flex; align-items: center; border: 1px solid var(--line); border-radius: 4px; background: var(--bg); }
+  .secret input { flex: 1; min-width: 0; font: inherit; color: var(--text); background: none; border: 0; padding: 2px 6px; outline: none; }
+  .secret:focus-within { border-color: var(--accent); }
+  .secret button { width: 24px; height: 20px; display: grid; place-items: center; color: var(--muted); }
+  .secret button:hover { color: var(--text); }
+  .secret button .shut { display: none; }
+  .secret.shown button .open { display: none; }
+  .secret.shown button .shut { display: inline; }
+  #toast { position: absolute; left: 50%; bottom: 16px; transform: translateX(-50%); z-index: 6; max-width: calc(100vw - 32px); padding: 6px 12px;
+    border-radius: 6px; background: var(--text); color: var(--bg); font-size: 12px; white-space: pre-line; box-shadow: 0 4px 16px rgba(0, 0, 0, .18); }
+  #toast.bad { background: var(--warn); color: #fff; }
 
   /* Drawers (settings, annotations): from the right, only when asked for. */
   .drawer { position: absolute; top: 0; right: 0; bottom: 0; width: min(300px, 86vw); z-index: 3; background: var(--bg);
@@ -240,7 +288,8 @@
   #settings h3 { margin: 18px 0 6px; font-size: 12px; font-weight: 600; color: var(--muted); }
   #settings h3:first-of-type { margin-top: 4px; }
   #settings .hint { margin: 0 0 6px; color: var(--muted); font-size: 12px; }
-  #settings .note { margin: 4px 0 0; color: #c0392b; font-size: 12px; }
+  #settings .note { margin: 4px 0 0; color: var(--warn); font-size: 12px; }
+  #settings .note.ok { color: var(--ok); }
   #settings .note:empty { display: none; }
   #settings .row { display: flex; align-items: center; gap: 8px; margin-top: 4px; }
   #settings .spacer { flex: 1; }
@@ -265,6 +314,7 @@
   #keyList button.capturing { border-color: var(--accent); color: var(--accent); }
   #settings label.field { display: flex; align-items: center; gap: 8px; margin-bottom: 6px; }
   #settings label.field input, #settings label.field select { flex: 1; font: inherit; color: var(--text); background: var(--bg); border: 1px solid var(--line); border-radius: 4px; padding: 2px 6px; }
+  #settings label.field .secret input { border: 0; background: none; border-radius: 0; }
   #mapPrompt, #noteTemplate { width: 100%; font: 12px/1.5 ui-monospace, Menlo, monospace; color: var(--text); background: var(--bg); border: 1px solid var(--line); border-radius: 4px; padding: 6px; resize: vertical; }
 
   #message { position: absolute; inset: 0; z-index: 1; display: grid; place-content: center; gap: 10px; text-align: center;
@@ -284,6 +334,13 @@
   <button id="pageLabel" class="meta" title="跳页（G）"></button>
   <input id="pageInput" type="number" min="1" hidden aria-label="页码">
   <button id="zoomLabel" class="meta" title="适应宽度（0）"></button>
+  <button id="recButton" class="icon" hidden aria-label="增强识别">
+    <svg width="14" height="14" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.3" stroke-linejoin="round" aria-hidden="true">
+      <path class="spark" d="M6.5 3.5c.5 3.3 2.2 5 5.5 5.5-3.3.5-5 2.2-5.5 5.5-.5-3.3-2.2-5-5.5-5.5 3.3-.5 5-2.2 5.5-5.5zM12.5 1c.25 1.3.95 2 2.25 2.25-1.3.25-2 .95-2.25 2.25-.25-1.3-.95-2-2.25-2.25 1.3-.25 2-.95 2.25-2.25z"/>
+      <path class="wait" d="M4 1.75h8M4 14.25h8M5 1.75v2c0 1.8 3 2.6 3 4.25 0-1.65 3-2.45 3-4.25v-2M5 14.25v-2c0-1.8 3-2.6 3-4.25 0 1.65 3 2.45 3 4.25v2"/>
+      <path class="warn" d="M8 2 14.6 13.75H1.4zM8 6.5v3.4M8 11.6v.3"/>
+    </svg>
+  </button>
   <button id="annButton" class="icon" title="批注（A）" aria-label="批注">
     <svg width="14" height="14" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.4" aria-hidden="true">
       <path d="M2 3.5h12M2 8h7M2 12.5h12"/><path d="M11 6.5h3v3h-3z" fill="currentColor" stroke="none"/>
@@ -295,6 +352,15 @@
     </svg>
   </button>
 </div>
+
+<div id="recPop" hidden role="dialog" aria-label="增强识别">
+  <p id="recPopText"></p>
+  <div class="secret"><input id="recPopKey" type="password" autocomplete="off" spellcheck="false" aria-label="Key"><button class="eye" type="button" title="显示 / 隐藏" aria-label="显示或隐藏 Key"></button></div>
+  <div id="recPopSay" class="say"></div>
+  <div class="row"><button id="recPopMore" class="link">更多设置…</button><span class="spacer"></span><button id="recPopCancel">取消</button><button id="recPopGo" class="primary">保存并识别</button></div>
+  <small id="recPopHint"></small>
+</div>
+<div id="toast" hidden role="status"></div>
 
 <aside id="annDrawer" class="drawer" hidden aria-label="批注">
   <header><h2>批注</h2><span id="drawerCount"></span><button id="drawerClose" aria-label="关闭">✕</button></header>
@@ -338,6 +404,18 @@
   <textarea id="mapPrompt" rows="12" spellcheck="false" aria-label="论文地图提示词"></textarea>
   <div class="row"><span class="spacer"></span><button id="mapReset" class="link">恢复默认提示词</button></div>
   <p id="mapNote" class="note"></p>
+
+  <h3 id="recSection">增强识别</h3>
+  <p class="hint">用 MinerU 识别整篇论文：公式转成 LaTeX，表格保留行列，双栏按阅读顺序，公式位置更准；Codex 读论文时自动使用。需要把 PDF 上传到 MinerU 官方服务（消耗你的额度）或你自部署的 MinerU。结果存在本机，每篇只识别一次；生成论文地图时也用它。顶栏的识别图标（✦）显示状态：灰色 = 未识别，点它识别这篇；沙漏 = 识别中；蓝色 = 已生效；红色警告 = 失败，点它重试。</p>
+  <label class="radio"><input type="checkbox" id="recAuto"><span>增强识别（MinerU，需要上传 PDF）</span>
+    <small>打开就识别每一篇在阅读器里打开的论文。关闭时，只在你点识别图标、或在对话里要求并确认时识别。</small></label>
+  <label class="field"><span>MinerU Key</span><span class="secret"><input id="recKey" type="password" autocomplete="off" spellcheck="false"><button class="eye" type="button" title="显示 / 隐藏" aria-label="显示或隐藏 Key"></button></span></label>
+  <label class="field"><span>自部署 MinerU</span><input id="recSelfUrl" type="text" placeholder="服务地址，如 https://mineru.example.org；不用就留空" spellcheck="false"></label>
+  <label class="field"><span>自部署 Key</span><span class="secret"><input id="recSelfKey" type="password" autocomplete="off" spellcheck="false"><button class="eye" type="button" title="显示 / 隐藏" aria-label="显示或隐藏 Key"></button></span></label>
+  <div class="row"><span class="spacer"></span><button id="recTest" class="link">测试连接</button></div>
+  <label class="radio"><input type="checkbox" id="recFallback"><span>自部署服务失败时改用 MinerU 官方 API</span>
+    <small>会把论文上传到云端。默认不改用。</small></label>
+  <p id="recNote" class="note"></p>
 
   <h3>精读问题</h3>
   <p class="hint">你让 Codex"带我读这篇"时，它带着这些问题一步步引导你读；每读完一个问题记入这篇论文的"精读笔记"，问题都读完，论文就读完了。## 是分组，### 是问题标题，下面一段是问题全文；没有问题的分组由讨论展开。</p>

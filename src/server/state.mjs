@@ -9,7 +9,10 @@ import { DEFAULT_RENDER_MODE, RENDER_MODES } from '../shared/layout.mjs';
 import { atomicJSON, jsonFile } from './files.mjs';
 
 // keys: only the user's overrides (combo, or null for unbound); mapPrompt / mapModel / mapEffort / readingQuestions: '' means the default.
-const DEFAULT_PREFS = { renderMode: DEFAULT_RENDER_MODE, palette: DEFAULT_PALETTE, keys: {}, mapPrompt: '', mapModel: '', mapEffort: '', readingQuestions: '' };
+// recognition: enhanced recognition (recognition.mjs) — auto: recognize every paper opened in the reader; selfUrl: a
+// self-hosted MinerU (mineru-kit api-server, V1 API); fallback: when it fails, use the official API. The keys are in the keychain.
+const DEFAULT_RECOGNITION = { auto: false, selfUrl: '', fallback: false };
+const DEFAULT_PREFS = { renderMode: DEFAULT_RENDER_MODE, palette: DEFAULT_PALETTE, keys: {}, mapPrompt: '', mapModel: '', mapEffort: '', readingQuestions: '', recognition: DEFAULT_RECOGNITION };
 const MAX_PROMPT = 20000;
 // The first default palette (疑问 marked for answers by a flag); saved copies of it give way to the current default.
 const OLD_DEFAULT = ['#ffd400重点', '#a28ae5疑问', '#2ea8e5定义', '#5fb236启发', '#ff6666存疑'];
@@ -25,7 +28,7 @@ export class State {
     const saved = await jsonFile(join(this.root, 'preferences.json'), {});
     if (isOldDefault(saved.palette)) delete saved.palette;
     else if (Array.isArray(saved.palette)) saved.palette = saved.palette.map(({ color, tag }) => ({ color, tag }));
-    return { ...DEFAULT_PREFS, ...saved };
+    return { ...DEFAULT_PREFS, ...saved, recognition: { ...DEFAULT_RECOGNITION, ...saved.recognition } };
   }
 
   // Saves run one after another: each reads what the previous one wrote.
@@ -66,6 +69,18 @@ export class State {
       const m = String(patch.mapModel || '').trim();
       if (m && !/^[\w.:-]{1,60}$/.test(m)) throw new Error('模型名称无效。');
       next.mapModel = m;
+    }
+    if (patch.recognition !== undefined) {
+      const r = { ...next.recognition, ...patch.recognition };
+      const url = String(r.selfUrl || '').trim();
+      if (url) {
+        let u;
+        try { u = new URL(url); } catch { throw new Error('自部署 MinerU 的地址无效。'); }
+        // The key travels with every request: plain http only to this machine.
+        const loopback = ['127.0.0.1', 'localhost', '[::1]'].includes(u.hostname);
+        if (!(u.protocol === 'https:' || (u.protocol === 'http:' && loopback)) || u.username || u.password) throw new Error('自部署 MinerU 的地址应以 https://（本机服务可用 http://）开头，不含用户名和密码。');
+      }
+      next.recognition = { auto: !!r.auto, selfUrl: url, fallback: !!r.fallback };
     }
     // The default palette is not stored, so a later change of the default reaches everyone who kept it.
     const { palette, ...rest } = next;

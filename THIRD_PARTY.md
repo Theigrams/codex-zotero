@@ -23,4 +23,5 @@
 | 组件 | 用途 | 许可 |
 |---|---|---|
 | [PyMuPDF](https://pymupdf.readthedocs.io) | 可选的 PDF 文字修复 | GNU AGPL 3.0（或 Artifex 商业许可）。不随本仓库分发；插件通过独立的 Python 进程调用它 |
+| [fontTools](https://github.com/fonttools/fonttools) | 文字修复时读取 PDF 内嵌字体的字形名 | MIT。不随本仓库分发 |
 | Apple PDFKit | PDF 渲染 | macOS 系统框架 |

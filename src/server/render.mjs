@@ -40,12 +40,11 @@ export class Renderer {
     return { data: (await readFile(file)).toString('base64') };
   }
 
-  // The original-image crop sent with a question: the selection (or region) padded a little,
-  // about 3× its point size and at most 1800px wide, no post-processing.
-  async crop(doc, { page, rect, scale: maxScale = 3 }) {
+  // The original-image crop sent with a question (and page_image for the model): the selection (or region)
+  // padded a little, about 3× its point size and at most 1800px wide, no post-processing.
+  async crop(doc, { page, rect, scale: maxScale = 3, pad = 6 }) {
     const p = doc.pages[page - 1];
     if (!p) throw new Error('页码超出范围。');
-    const pad = 6;
     const x0 = Math.max(0, rect[0] - pad), y0 = Math.max(0, rect[1] - pad);
     const x1 = Math.min(p.width, rect[0] + rect[2] + pad), y1 = Math.min(p.height, rect[1] + rect[3] + pad);
     if (x1 - x0 < 1 || y1 - y0 < 1) throw new Error('选区太小。');
@@ -55,7 +54,7 @@ export class Renderer {
     const file = join(doc.cacheDir, `crop-${randomUUID()}.png`);
     await this.pool.run(doc.path, { op: 'render', page, region, scale, full, out: file }, 0);
     try {
-      return { data: (await readFile(file)).toString('base64'), width: full[0], height: full[1] };
+      return { data: (await readFile(file)).toString('base64'), width: full[0], height: full[1], region, scale };
     } finally {
       await unlink(file).catch(() => {});
     }

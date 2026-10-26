@@ -16,7 +16,8 @@ export const ACTIONS = [
   { id: 'undo', label: '恢复刚删除的批注', key: 'Meta+z' },
   { id: 'closeTab', label: '关闭当前标签', key: 'Meta+w' },
   { id: 'settings', label: '设置', key: 'Meta+,' },
-  { id: 'debug', label: '调试行', key: 'Shift+d' },
+  { id: 'debug', label: '调试行（性能数据）', key: 'Shift+d' },
+  { id: 'blocks', label: '调试模式：显示识别分块', key: 'Shift+m' },
 ];
 
 export const DEFAULT_KEYS = Object.fromEntries(ACTIONS.map(a => [a.id, a.key]));

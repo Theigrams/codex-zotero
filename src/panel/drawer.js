@@ -116,7 +116,7 @@ export class AnnotationDrawer {
         const row = document.createElement('div');
         row.className = 'mapRow';
         if (this.map.status === 'running') {
-          row.textContent = '论文地图生成中…（约一两分钟）';
+          row.textContent = this.map.stage ? `论文地图：${this.map.stage}后生成…` : '论文地图生成中…（约一两分钟）';
         } else {
           if (this.map.status === 'failed') {
             const why = document.createElement('small');

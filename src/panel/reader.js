@@ -102,6 +102,19 @@ export class Reader {
     this.scroller.scrollTop = Math.max(0, L.top + ((y - ry) / rh) * L.h - Math.max(this.topInset + 8, this.scroller.clientHeight * at));
   }
 
+  // Brings a rect of a page fully into view, centred when it fits; leaves the view alone when it already is.
+  reveal(page, [, y, , h]) {
+    const L = this.layout[page - 1];
+    if (!L) return;
+    const [, ry, , rh] = this.region(page - 1);
+    const top = L.top + ((y - ry) / rh) * L.h, height = (h / rh) * L.h;
+    const view = this.scroller.clientHeight - this.topInset;
+    const seen = this.scroller.scrollTop + this.topInset;
+    if (top >= seen + 4 && top + height <= seen + view - 4) return;
+    this.programmaticUntil = performance.now() + 80;
+    this.scroller.scrollTop = Math.max(0, top - this.topInset - Math.max(8, (view - height) / 2));
+  }
+
   position() {
     const page = this.pageAt(this.scroller.scrollTop + this.topInset + 1);
     const L = this.layout[page - 1];
