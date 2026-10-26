@@ -5,3 +5,5 @@ export const timing = {
   annotationsPollMs: 3000, // annotations changed in Zotero
   mapPollMs: 3000,        // a paper map being generated
 };
+
+export const remoteTiming={navPollMs:5000,annotationsPollMs:10000,mapPollMs:10000};

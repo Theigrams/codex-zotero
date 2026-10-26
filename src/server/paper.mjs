@@ -5,7 +5,7 @@ import { findAll, rectsOf, searchable, searchKey, textOf } from '../shared/text.
 const MAX_READ_CHARS = 40000;
 
 // Line structure kept (one line per line), hyphenated line ends joined.
-export const plainText = page => page.t.join('').replace(/-\n/g, '').replace(/[ \t]+/g, ' ').replace(/ ?\n ?/g, '\n').trim();
+export const plainText = page => (page.fullText ?? page.t.join('')).replace(/-\n/g, '').replace(/[ \t]+/g, ' ').replace(/ ?\n ?/g, '\n').trim();
 
 export class Paper {
   constructor(text) {
@@ -37,6 +37,13 @@ export class Paper {
     const hits = [];
     for (let k = 1; k <= doc.pageCount && hits.length < limit; k++) {
       const page = await this.page(doc, k);
+      if (page.fullText !== undefined) {
+        const text = page.fullText.toLowerCase(), needle = query.toLowerCase();
+        for (let at = text.indexOf(needle); needle && at >= 0 && hits.length < limit; at = text.indexOf(needle, at + needle.length)) {
+          hits.push({ page: k, label: doc.pages[k - 1].label, snippet: page.fullText.slice(Math.max(0, at-70), at+needle.length+70), source: 'ocr' });
+        }
+        continue;
+      }
       const index = searchable(page);
       const q = searchKey(query);
       for (let at = index.s.indexOf(q); q && at >= 0 && hits.length < limit; at = index.s.indexOf(q, at + q.length)) {

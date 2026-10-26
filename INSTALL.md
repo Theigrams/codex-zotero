@@ -7,7 +7,7 @@
 ```bash
 sw_vers -productVersion                 # macOS
 xcrun swiftc --version                  # Xcode 命令行工具；没有就运行 xcode-select --install
-node --version                          # 需要 v20 或更高
+node --version                          # 需要 v22 或更高
 ls /Applications/ChatGPT.app/Contents/Resources/cua_node/bin/node   # Codex 自带的 Node，插件运行时用它
 curl -s http://127.0.0.1:23119/connector/ping                        # Zotero 本地服务
 ```
@@ -20,7 +20,7 @@ curl -s http://127.0.0.1:23119/connector/ping                        # Zotero �
 PDF 里的连字（fi、fl）和一些符号（Σ、Λ）常常取不出正确的文字。装了 PyMuPDF，插件会用它修复，选中的文字和发给 Codex 的原文更准确。不装也能用。
 
 ```bash
-python3 -m pip install pymupdf
+python3 -m pip install pymupdf fonttools
 python3 -c "import pymupdf; print(pymupdf.__version__)"
 ```
 
@@ -34,6 +34,15 @@ cd codex-zotero
 npm install
 npm test                                 # 单元测试，应全部通过
 ```
+
+## 2.1 本地版面模型与可选云端 OCR
+
+```bash
+npm run setup-analysis       # 本机版面检测和文字提取环境，无云端 OCR
+npm run configure-mineru     # 可选：交互式配置 MinerU key，不回显
+```
+
+「版面」默认开启；没有本地模型时退回 PDF 原生块并提示。高精度 OCR 识别整篇。打开阅读器「设置 → MinerU 识别」填写 API key 后默认允许模型按需识别，也可手动关闭全局开关。打开论文不会自动启动识别。详见 [版面与 OCR](docs/LAYOUT_OCR.md)。
 
 ## 3. 安装插件
 

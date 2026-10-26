@@ -163,7 +163,10 @@ test('the queue is kept on disk and resumes in a new process', () => setup({}, a
   await service.create(doc, sel);
   z.state.offline = false;
   const again = new Annotations({ root, fetch: zoteroClient(z.url), backoff: [20] });
-  for (let i = 0; i < 500 && z.annotations().length === 0; i++) await new Promise(r => setTimeout(r, 10));
+  // A remote item can exist before the resumed writer has finished saving its queue.
+  for (let i = 0; i < 500 && (z.annotations().length === 0 || again.writer.running || again.writer.ops.some(op => op.status === 'pending')); i++) await new Promise(r => setTimeout(r, 10));
+  assert.equal(!!again.writer.running, false);
+  assert.equal(again.writer.ops.some(op => op.status === 'pending'), false);
   clearTimeout(again.writer.timer);
   assert.equal(z.annotations().length, 1);
 }));

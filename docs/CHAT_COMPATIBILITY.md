@@ -1,0 +1,63 @@
+# Chat 中的正文读取与工具发现
+
+阅读器界面、模型上下文和模型可调用工具是三条不同的通道。看到论文标题或“全文已缓存”，不能据此认定这一轮模型已经获得正文读取工具。正文成功返回后，才可以基于论文进行总结。
+
+## 读取入口
+
+公开 MCP 工具明确声明 `ui.visibility: [model, app]`，不挂载阅读器 UI resource；调用正文工具不会重新打开面板。读取工具声明 readOnlyHint=true、destructiveHint=false、openWorldHint=false。上传、写批注、删除、取消等操作保留各自的写入属性。
+
+在支持 WebMCP 的桌面宿主中，展开的阅读器还提供固定、只读的页面内工具：
+
+| 页面内工具 | 功能 |
+| --- | --- |
+| `reader_read_pages` | 当前论文的本机页面文字 |
+| `reader_read_full_text` | 当前论文已缓存的 MinerU 全文，支持分页和版本复用 |
+| `reader_read_annotations` | 当前论文的高亮和完整评论 |
+| `reader_ocr_status` | 当前论文 OCR 状态，不启动识别 |
+| `reader_research_status` | 当前明确选中的研究文献状态 |
+| `reader_research_annotations` | 所选研究文献之一的批注 |
+| `reader_research_full_text` | 所选研究文献之一的缓存全文 |
+
+页面内工具将 `content` 中的实际正文和 `structuredContent` 中的状态一起返回，不能只读取后者。它们仅操作当前论文或本阅读器已选的研究文献；没有通用执行器，也没有额外暴露上传或写入入口。阅读器关闭后，页面内工具随其注销。
+
+## 验证与能力边界
+
+- 本机 MCP 测试能确认服务端工具存在、声明正确且可以返回正文。
+- AppBridge 测试能确认页面内工具通过真实工具通道返回正文和评论，分页、错误、文献范围限制有效。
+- 上述测试不等同于 Chat 模型实际发现了工具。最终工具集合由宿主、对话的执行环境和插件连接状态决定。
+- 当前插件依赖本机 Zotero、PDFKit 和 Python，保留 requires_local_executor；不能靠删除该标记或伪造配置，使云端直接获得本地文件。
+- 官方说明本地 MCP 插件用于支持本地执行的对话。如果在 Chat 中已选中插件仍完全没有工具，需要核对宿主是否向该对话提供了本地执行/MCP；单凭标题上下文不能判断连接成功。
+- 更新后完全重启桌面应用以刷新服务与工具定义。需要时用新对话验证，避免旧对话仍使用缓存的工具集合。
+
+测试使用隔离文库和模拟 OCR。真实 Chat 的工具发现仍需在目标宿主验证，不能用“元数据可见”作为验证通过的替代。
+
+## 实际 Chat 复测（2026-10-25）
+
+完成上述可见性和返回正文修正后，用户在新 Chat、阅读器保持展开的情况下复测，仍未获得 `paper_full_text` 或 `reader_read_full_text`。页面注册成功不能据此等同于模型发现成功。
+
+已确认的边界：
+
+- 同一台机器上的本地 MCP 可以返回已缓存的 9 页论文全文（29451 字符），不是 OCR 缓存丢失。
+- 桌面宿主日志记录 Zotero MCP `status=ready`，阅读器持续成功发起页面与批注工具调用。没有证据表明 Zotero MCP 启动失败。
+- Chat 回答仍缺少正文读取工具，并报告浏览器连接上下文不满足要求。嵌入的 MCP App 不是普通浏览器标签；连接浏览器不是可靠的替代入口。
+- 以上支持“当前 Chat 的工具接入链路尚未打通”，不足以断言所有 Chat 或所有桌面版本都不支持本地 MCP，也不足以认定某个具体宿主配置项是根因。
+
+阅读器因此只报告 `readingAccess.registeredPageTools` 和 `modelToolExposure: unknown`，不宣称模型已经能调用。模型应检查本轮真正的工具列表；缺少工具时直接报告读取不可用，不能把重启、重新 OCR、打开源码 HTML 或重复新建 Chat 当作已验证的修复。
+
+本地 MCP/浏览器预检通过不计为 Chat 端到端通过。剩余验收条件是：在目标 Chat 中成功执行一次正文读取，返回实际文字并据此引用原 PDF 页码。若宿主没有将本地工具交给该 Chat，插件代码无法自行增加它的工具权限；可另行评估本地 Work/Codex、可访问的远程 MCP，或用户主动添加全文的备用流程。当前版本未自动切换模式、开启公网服务或注入全文。
+
+已增加可选的 [Chat 私有远程 MCP 桥接](CHAT_REMOTE.md)，通过 OpenAI Secure MCP Tunnel 回到正在运行的阅读器。该链路已有本地双进程测试，真实 Chat 的验收仍需完成账号登录、隧道关联与工具调用；不能将桥接实现完成表述成账号已连接。
+
+参考：[工具可见性与返回格式](https://developers.openai.com/plugins/reference)、[桌面本地插件](https://developers.openai.com/plugins/deploy/desktop-only)、[WebMCP](https://github.com/openai/mcp-extensions/blob/main/docs/spec.md#webmcp)。
+
+## 网页阅读器界面（2026-10-26）
+
+此前的私有桥接只发布数据工具，网页能够读取标题/正文并不意味着会显示 PDF 界面。这是旧桥接缺少 UI 资源和打开入口导致的实现缺口。现已增加 `reader_open` 及完整 MCP App HTML，网页操作通过 App-only 工具转发到同一本机服务。无需 WebMCP 或 localhost 访问权限，模型读取与界面显示分别有独立入口。
+
+更新后完全重启本机宿主、重连隧道，并在 Chat 刷新工具。确认 `reader_open` 已出现，再发送「打开 Zotero 阅读器」。若只得到文字回复，检查是否真正调用了该入口以及资源是否加载；不要把重新 OCR 当作界面修复。网页布局由 ChatGPT 控制；支持 inline/fullscreen 请求，不承诺固定侧边栏。
+
+隔离网页宿主测试已覆盖 PDF 打开、选区上下文、高亮/评论写回和模型读取评论；真实账号的资源渲染仍需要用户更新连接后验收。
+
+用户已在网页实际打开 PDF，但报告部分条带留白和 `McpServerError: MCP server is not initialized`。该文本由官方 tunnel-client 的 stdio 初始化保护产生，表示协议就绪状态不足，不能据此判断网络带宽差。现在启用官方 initialized 通知兼容选项，并把网页渲染改为带缓存、请求限流、有限读取重试和本页重试按钮的整页传输。真实 Chat 更新后仍需验证其重新握手；本地测试不替代该步骤。
+
+另一个实测问题是：隧道仍运行，但桌面对话的临时阅读器已退出，`reader_connections` 返回空列表，旧网页卡片显示“阅读器连接已关闭”。受管模式现改为专用后台，独立于桌面对话生命周期，并覆盖后台重启后的恢复；整个桥接重启后仍需关闭旧卡片、通过 `reader_open` 绑定新逻辑标识。

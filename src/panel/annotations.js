@@ -39,7 +39,8 @@ export class AnnotationLayer {
     if (this.doc === doc) this.timer = setTimeout(() => this.poll(), timing.annotationsPollMs);
   }
 
-  async refresh() {
+  async refresh(force = false) {
+    if (this.pendingWrites && !force) return;
     const seq = this.seq;
     const r = await this.call('annotations_list', { docId: this.doc.id, since: this.rev });
     if (seq === this.seq && !r.unchanged) this.apply(r); // a write started meanwhile: its own reply is newer
@@ -61,30 +62,32 @@ export class AnnotationLayer {
 
   // ---------- writes ----------
 
-  async write(name, args, optimistic) {
+  async write(name, args, optimistic, committed) {
     const seq = ++this.seq;
+    this.pendingWrites = (this.pendingWrites || 0) + 1;
     optimistic?.();
     this.redraw();
     this.onChange?.();
     try {
       const r = await this.call(name, { docId: this.doc.id, ...args });
+      committed?.(r);
       if (seq === this.seq) this.apply(r);
       return r;
     } catch (e) {
-      if (seq === this.seq) await this.refresh().catch(() => {});
+      if (seq === this.seq) await this.refresh(true).catch(() => {});
       throw e;
-    }
+    } finally { this.pendingWrites--; }
   }
 
   // sel: the reader selection ({ kind, page, rects | rect, text, a }).
-  async create(sel, { color, type = 'highlight' }) {
+  async create(sel, { color, type = 'highlight', onPending, onCommitted }) {
     if (!this.available) throw new Error('这篇 PDF 不是从 Zotero 打开的，批注无处保存。');
     const region = sel.kind === 'region';
     const rects = region ? [sel.rect] : sel.rects;
     const temp = { key: `tmp-${this.seq + 1}`, type: region ? 'image' : type, color, page: sel.page, rects, text: region ? '' : sel.text, comment: '', tags: [], sortIndex: '' };
     const r = await this.write('annotation_create', {
       kind: sel.kind, page: sel.page, rects, ...(region ? {} : { text: sel.text, offset: sel.a }), color, ...(region ? {} : { type }),
-    }, () => this.items.push(temp));
+    }, () => { this.items.push(temp); onPending?.(temp.key); }, r => onCommitted?.(r.key));
     return r.key;
   }
 

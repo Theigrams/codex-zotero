@@ -4,15 +4,19 @@ import { DEFAULT_PALETTE, ZOTERO_COLORS } from '../shared/annotations.mjs';
 import { ACTIONS, DEFAULT_KEYS, comboOf, keymap, reserved, showCombo } from '../shared/keys.mjs';
 import { MAP_PROMPT } from '../server/map-prompt.mjs';
 import { DEFAULT_QUESTIONS, parseTemplate } from '../server/reading-questions.mjs';
+import { TunnelSettings } from './tunnel-settings.js';
 
 const $ = id => document.getElementById(id);
 const MAX_COLORS = 9;
 
 export class Settings {
   // getPrefs(): the current preferences; onChange(prefs): after a save.
-  constructor({ call, getPrefs, onChange }) {
+  constructor({ call, getPrefs, onChange, openUrl = url => window.open(url, '_blank', 'noopener') }) {
     Object.assign(this, { call, getPrefs, onChange });
     this.el = $('settings');
+    this.tunnel = window.__ZOTERO_REMOTE__ ? null : new TunnelSettings({call,openUrl});
+    $('mineruForm').addEventListener('submit', e => { e.preventDefault(); this.saveMineru(); });
+    $('allowModelOcr').addEventListener('change', () => this.save({ allowModelOcr: $('allowModelOcr').checked }, 'ocrSettingsNote'));
     this.capturing = null; // action id waiting for a new combo
     this.picking = -1;     // palette row whose color is being picked
     for (const input of document.querySelectorAll('input[name="renderMode"]')) {
@@ -60,15 +64,44 @@ export class Settings {
   open() {
     this.render();
     this.el.hidden = false;
+    this.tunnel?.open();
+    const request = this.loadRequest = (this.loadRequest || 0) + 1;
+    this.call('prefs_get').then(({ prefs }) => {
+      if (request !== this.loadRequest) return;
+      this.onChange(prefs); this.render();
+    }).catch(() => { $('ocrSettingsNote').textContent = '无法刷新设置，请重新打开阅读器或重启 Codex。'; });
   }
 
   close() {
     this.capturing = null;
+    this.loadRequest = (this.loadRequest || 0) + 1;
+    $('mineruKey').value = '';
+    this.tunnel?.close();
     $('swatches').hidden = true;
     this.el.hidden = true;
   }
 
+  async saveMineru() {
+    if (this.savingMineru) return;
+    const apiKey = $('mineruKey').value.trim();
+    $('mineruNote').classList.remove('success');
+    if (!apiKey) { $('mineruNote').textContent = '请填写 MinerU API key。'; return; }
+    this.savingMineru = true;
+    this.loadRequest = (this.loadRequest || 0) + 1;
+    $('mineruSave').disabled = true; $('mineruKey').disabled = true;
+    $('mineruNote').textContent = '';
+    try {
+      const { prefs } = await this.call('mineru_configure', { apiKey });
+      $('mineruKey').value = '';
+      this.onChange(prefs); this.render();
+      $('mineruNote').classList.add('success');
+      $('mineruNote').textContent = '已保存到本机。';
+    } catch (e) { $('mineruNote').textContent = e.message; }
+    finally { this.savingMineru = false; $('mineruSave').disabled = false; $('mineruKey').disabled = false; }
+  }
+
   async save(patch, noteId) {
+    this.loadRequest = (this.loadRequest || 0) + 1;
     if (noteId) $(noteId).textContent = '';
     this.refused = null;
     try {
@@ -83,6 +116,10 @@ export class Settings {
 
   render() {
     const p = this.getPrefs();
+    $('mineruState').textContent = p.mineruConfigured ? '已配置密钥 · 仅保存在本机，填写新密钥可替换。' : '尚未配置密钥。保存后即可使用整篇识别。';
+    $('mineruKey').placeholder = p.mineruConfigured ? '填写新密钥以替换（不回显已存密钥）' : '填写 MinerU API key';
+    $('allowModelOcr').checked = !!p.mineruConfigured && p.allowModelOcr !== false;
+    $('allowModelOcr').disabled = !p.mineruConfigured;
     for (const input of document.querySelectorAll('input[name="renderMode"]')) input.checked = input.value === p.renderMode;
     this.renderPalette(p.palette || DEFAULT_PALETTE);
     this.renderKeys(keymap(p.keys));

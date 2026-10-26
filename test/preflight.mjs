@@ -170,7 +170,11 @@ try {
   check('0 returns to fit width', (await bar()).zoom === '100%', (await bar()).zoom);
 
   // 4. Render mode switch through the settings drawer.
-  await page.click('#settingsButton');
+  // The toolbar can auto-hide after scrolling; the settings shortcut remains available.
+  await page.keyboard.down('Meta');
+  await page.keyboard.press(',');
+  await page.keyboard.up('Meta');
+  await page.waitForSelector('#settings:not([hidden])');
   await page.click('input[value="rounded"]');
   await until(() => page.evaluate(() => {
     const L = window.__reader.layout[0];
@@ -205,6 +209,11 @@ try {
   await page.waitForFunction(() => window.__reader?.metrics.openSharpMs != null, { timeout: 20000 });
   check('reading position restored after reload', (await bar()).page === before && before.startsWith('12'), `${before} → ${(await bar()).page}`);
 
+  // Installation checks accept any PDF; the full suite below uses its documented CAD fixture.
+  if (process.argv.includes('--installation')) {
+    const repaired = await page.evaluate(async () => (await window.__selection.textFor(1)).repaired);
+    check('installed Python text repair works', repaired);
+  } else {
   // 7. Selection: double-click a word, drag across lines, ⌥-drag a region, ask, context.
   await page.evaluate(() => window.__reader.scrollToPage(1));
   await sleep(1200);
@@ -238,12 +247,11 @@ try {
   await page.screenshot({ path: `${outDir}/4-selection.png` });
   check('drag selects across lines', dragged.lines >= 2 && /^As an inherent/.test(dragged.text || ''), JSON.stringify(dragged).slice(0, 160));
   await page.click('#ask');
-  await page.type('#askInput', '这段在说什么？');
-  await page.keyboard.press('Enter');
   await sleep(1500);
   const sent = await page.evaluate(() => window.__sent.slice());
-  const msg = sent.filter(m => m.kind === 'message').at(-1);
-  check('ask sends question + quote + original image', msg && msg.text.startsWith('这段在说什么？') && msg.text.includes('As an inherent') && /^\d+x\d+$/.test(msg.image || ''), msg ? `${msg.image} ${msg.text.slice(0, 60)}` : 'none');
+  await page.waitForFunction(() => window.__contexts.items.some(b => b.image));
+  const attached = await page.evaluate(() => window.__contexts.items);
+  check('chat handoff attaches the selection without sending a message', !sent.some(m => m.kind === 'message') && attached.some(b => b.text.includes('As an inherent') && b.image), `${attached.length} attached blocks`);
   const ctx = sent.filter(m => m.kind === 'context').at(-1);
   check('reading context synced with the selection', ctx && ctx.text.includes('选中了第 1 页') && ctx.text.includes('第 1 / '), ctx?.text.slice(0, 120));
   await page.keyboard.down('Alt');
@@ -442,8 +450,7 @@ try {
   await sleep(1200);
   const st = await model('reader_state');
   check('reader_state knows the paper and page', /Preflight paper/.test(st.text) && /当前第 3 页/.test(st.text), st.text?.slice(0, 120) || st.error);
-  const afterAsk = await until(async () => { const t = (await model('reader_state')).text || ''; return /上次用面板提问的是第 1 页的「As an inherent/.test(t) && t; }, 4000);
-  check('after the selection is gone, the selection last asked about is still what use_selection saves to', !!afterAsk, String(afterAsk).slice(0, 120));
+  check('preparing context is not recorded as a sent question', !/上次用面板提问/.test(st.text || ''));
   const pc = await model('paper_context');
   check('paper_context returns nearby pages and annotations', /=== 第 2 页/.test(pc.text) && /=== 第 4 页/.test(pc.text) && /批注/.test(pc.text), `${pc.text?.length} chars`);
   check('paper_context includes the paper\'s structure', /结构/.test(pc.text) && /Introduction（第 1 页）/.test(pc.text), (pc.text?.match(/结构[^\n]*\n[^\n]*\n[^\n]*/) || ['none'])[0]);
@@ -689,11 +696,13 @@ try {
   const superseded = await until(() => page.$eval('#messageText', el => el.textContent.includes('新的面板') && el.textContent), 6000) || await page.$eval('#messageText', el => el.textContent);
   check('older panel steps aside', superseded.includes('新的面板'), superseded);
 
+  }
+
   check('no page errors', errors.length === 0, errors.join(' | '));
   const report = { checks, scroll, zoomed, layout, rounded };
   await writeFile(`${outDir}/report.json`, JSON.stringify(report, null, 1));
 } catch (e) {
-  check('preflight ran to the end', false, e.message);
+  check('preflight ran to the end', false, e.stack || e.message);
 } finally {
   for (const c of checks) console.log(`${c.ok ? 'ok  ' : 'FAIL'} ${String(((c.ms ?? 0) / 1000).toFixed(1)).padStart(5)}s ${c.name}${c.detail ? `  — ${c.detail}` : ''}`);
   console.log(`total ${((Date.now() - startedAt) / 1000).toFixed(0)}s`);

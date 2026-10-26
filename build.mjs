@@ -33,13 +33,18 @@ export async function buildPlugin({ python = process.env.CODEX_ZOTERO_PYTHON || 
   await mkdir('out/.agents/plugins', { recursive: true });
 
   execFileSync('swiftc', ['-O', 'native/PDFKitHelper.swift', '-o', `${root}/dist/pdfkit-helper`], { stdio: 'inherit' });
-  for (const f of ['text_server.py', 'text_layer.py']) await writeFile(`${root}/dist/${f}`, await readFile(`native/${f}`));
+  for (const f of ['text_server.py', 'text_layer.py', 'document_worker.py', 'compress_image.py']) await writeFile(`${root}/dist/${f}`, await readFile(`native/${f}`));
   await cp('skills', `${root}/skills`, { recursive: true });
 
   await build({
     entryPoints: ['src/server/index.mjs'], outfile: `${root}/dist/server.mjs`, bundle: true, platform: 'node',
     format: 'esm', target: 'node22', logLevel: 'warning',
     banner: { js: 'import { createRequire as __cr } from "node:module"; const require = __cr(import.meta.url);' },
+  });
+  await build({
+    entryPoints:['src/bridge/index.mjs'], outfile:`${root}/dist/chat-bridge.mjs`, bundle:true,
+    platform:'node', format:'esm', target:'node22', logLevel:'warning',
+    banner:{js:'import { createRequire as __cr } from "node:module"; const require = __cr(import.meta.url);'},
   });
 
   const ui = await build({
@@ -49,9 +54,25 @@ export async function buildPlugin({ python = process.env.CODEX_ZOTERO_PYTHON || 
   let html = await readFile('src/panel/index.html', 'utf8');
   const katex = await katexCSS();
   html = html.replace('/* BUNDLED_KATEX */', () => katex);
+  const extensionStyles = await readFile('node_modules/@openai/mcp-extensions/styles.css', 'utf8');
+  html = html.replace('/* BUNDLED_EXTENSIONS */', () => extensionStyles);
+  const settingsUI = await build({ entryPoints: ['src/panel/settings-entry.js'], bundle: true, write: false, platform: 'browser', format: 'iife', target: 'chrome120', minify: true });
+  await writeFile(`${root}/dist/settings.html`, html.replace('/* BUNDLED_APP */', () => settingsUI.outputFiles[0].text.replace(/<\/script/gi, '<\\/script')));
   html = html.replace('/* BUNDLED_APP */', () => ui.outputFiles[0].text.replace(/<\/script/gi, '<\\/script'));
   new Script(html.match(/<script>([\s\S]*)<\/script>/)[1]); // syntax check of the inlined bundle
   await writeFile(`${root}/dist/panel.html`, html);
+  // Web readers do not have the desktop-installed KaTeX fonts. Embed woff2 fonts without external requests.
+  let webKatex=await readFile('node_modules/katex/dist/katex.min.css','utf8');
+  for(const match of [...webKatex.matchAll(/src:([^;}]*fonts\/([^\s)]+\.woff2)[^;}]*)/g)]) {
+    const bytes=await readFile(`node_modules/katex/dist/fonts/${match[2]}`);
+    webKatex=webKatex.replace(match[0],`src:url(data:font/woff2;base64,${bytes.toString('base64')}) format("woff2")`);
+  }
+  const webHtml=html.replace(katex,()=>webKatex).replace('<script>','<script>window.__ZOTERO_REMOTE__=true;document.body.classList.add("remote-reader");');
+  await writeFile(`${root}/dist/remote-panel.html`,webHtml);
+
+  const previewUI = await build({ entryPoints: ['src/panel/paper-preview.js'], bundle: true, write: false, platform: 'browser', format: 'iife', target: 'chrome120', minify: true });
+  const previewHtml = (await readFile('src/panel/paper-preview.html', 'utf8')).replace('/* BUNDLED_PREVIEW */', () => previewUI.outputFiles[0].text.replace(/<\/script/gi, '<\\/script'));
+  await writeFile(`${root}/dist/paper-preview.html`, previewHtml);
 
   // Preflight-only test host (AppBridge over postMessage, like Codex); served by --standalone at /host.
   const host = await build({ entryPoints: ['src/dev/host.js'], bundle: true, write: false, platform: 'browser', format: 'esm', target: 'chrome120', minify: true, logLevel: 'warning' });
@@ -71,6 +92,7 @@ export async function buildPlugin({ python = process.env.CODEX_ZOTERO_PYTHON || 
   await writeFile(`${root}/.codex-plugin/plugin.json`, JSON.stringify({
     name: PLUGIN, version: VERSION, description: ui_.longDescription, author: { name: 'Local' }, license: 'MIT',
     requires_local_executor: true, interface: ui_, skills: './skills/', mcpServers: './.mcp.json',
+    extensions: { 'com.openai': { onboardingSkill: './skills/setup/SKILL.md' } },
   }, null, 2));
   // Codex starts the server without this shell's environment: CODEX_ZOTERO_* settings in effect now (docs/CONFIG.md)
   // go into the launch config, with the Python that was found.

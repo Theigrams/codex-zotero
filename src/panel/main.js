@@ -2,6 +2,9 @@
 // The reading surface is reader.js; selections are selection.js; what goes to Codex is conversation.js;
 // Zotero annotations are annotations.js (layer), popup.js (one annotation) and drawer.js (the list);
 // find.js is ⌘F and home.js the search + "being read" page.
+import { Blocks } from './blocks.js';
+import { ContextBlocks } from './contexts.js';
+import { OcrPanel } from './ocr.js';
 import { DEFAULT_PALETTE } from '../shared/annotations.mjs';
 import { actionFor, comboOf, keymap } from '../shared/keys.mjs';
 import { targetBlock } from '../shared/text.mjs';
@@ -16,7 +19,9 @@ import { connect } from './host.js';
 import { Reader } from './reader.js';
 import { Selection } from './selection.js';
 import { Settings } from './settings.js';
-import { timing } from './timing.js';
+import { timing, remoteTiming } from './timing.js';
+import { ResearchPanel } from './research.js';
+import { Interactions } from './interactions.js';
 
 const $ = id => document.getElementById(id);
 const BAR = 28;
@@ -34,11 +39,17 @@ let find = null;
 let home = null;
 let links = null;
 let settings = null;
+let blocks = null;
+let contexts = null;
+let ocr = null;
 let doc = null;
 let noteReturn = null; // { id, title } of the note a link led here from (↩ goes back to it)
 let noteTab = null; // the Zotero note shown in the active tab, when it is a note tab
 let tabs = [];
 let navSeen = 0;
+let prefsSeen = 0;
+let interactions = null;
+let researchPanel = null;
 let prefs = { renderMode: 'aligned' };
 let keys = keymap();
 const palette = () => prefs.palette?.length ? prefs.palette : DEFAULT_PALETTE;
@@ -59,6 +70,9 @@ function hideMessage() {
 
 function updateBar(page = reader?.currentPage()) {
   for (const id of ['pageLabel', 'zoomLabel']) $(id).hidden = !doc || home.isOpen;
+  $('layoutButton').hidden = !doc || home.isOpen;
+  $('ocrButton').hidden = !doc || home.isOpen;
+  $('layoutButton').setAttribute('aria-pressed', String(prefs.layoutEnabled !== false));
   $('annButton').hidden = !(doc || noteTab) || home.isOpen;
   $('annButton').title = noteTab ? '目录（A）' : '批注（A）';
   const back = links?.backPage;
@@ -144,6 +158,7 @@ function showTab(active) {
 
 // Leaves the paper on screen (if any) so a note, home or another paper can take the panel.
 function leavePaper() {
+  blocks?.reset(); ocr?.reset();
   savePosition();
   annotations.stop();
   popup.close();
@@ -276,6 +291,7 @@ function goBack() {
 }
 
 function showDoc(active) {
+  blocks?.reset(); ocr?.reset();
   noteReturn = null; // a note link sets it again right after
   hideNote();
   home.hide();
@@ -292,6 +308,8 @@ function showDoc(active) {
   annotations.load(doc);
   selection.prefetch(range(...reader.range(0)));
   links.prefetch(range(...reader.range(0)));
+  blocks?.prefetch(range(...reader.range(0)));
+  ocr?.refresh();
   conversation.schedule();
   renderTabs();
   updateBar();
@@ -300,6 +318,7 @@ function showDoc(active) {
 }
 
 function showHome() {
+  ocr?.close();
   savePosition();
   popup.close();
   find.reset();
@@ -390,6 +409,7 @@ function flashRects(k, rects) {
 // ---------- settings ----------
 
 function openSettings() {
+  ocr?.close();
   drawer?.close();
   closeToc();
   settings.open();
@@ -408,9 +428,14 @@ function toggleSettings() {
 // After the settings drawer saved something: the render mode, colors and keys take effect at once.
 function applyPrefs(next) {
   const mode = prefs.renderMode;
+  const ocrChanged = prefs.allowModelOcr !== next.allowModelOcr || prefs.mineruConfigured !== next.mineruConfigured;
   prefs = next;
+  if (ocrChanged && reader?.doc) ocr?.refresh();
   keys = keymap(prefs.keys);
   if (prefs.renderMode !== mode) reader?.setMode(prefs.renderMode);
+  blocks?.outline(null);
+  blocks?.prefetch(range(...(reader?.doc ? reader.range(0) : [1, 0])));
+  updateBar();
   popup?.render();
   drawer?.render();
 }
@@ -418,10 +443,9 @@ function applyPrefs(next) {
 // ---------- selection toolbar ----------
 
 function onSelection(sel, final) {
-  if (!sel) closeAsk();
-  else popup.close();
+  if (sel) popup.close();
   placeToolbar();
-  if (final) conversation.schedule();
+  if (final) { blocks?.outline(null); contexts?.selectionChanged(); conversation.schedule(); }
 }
 
 // Above the selection when there is room under the bar, otherwise below it; hidden when off screen.
@@ -438,37 +462,6 @@ function placeToolbar() {
   const left = Math.max(4, Math.min(window.innerWidth - w - 4, (r.left + r.right) / 2 - w / 2));
   tb.style.top = `${top}px`;
   tb.style.left = `${left}px`;
-}
-
-function openAsk() {
-  $('ask').hidden = true;
-  $('highlight').hidden = true;
-  $('comment').hidden = true;
-  $('toolbarNote').hidden = true;
-  $('askInput').hidden = false;
-  $('askInput').value = '';
-  placeToolbar();
-  $('askInput').focus();
-}
-
-function closeAsk() {
-  $('askInput').hidden = true;
-  $('ask').hidden = false;
-  $('highlight').hidden = false;
-  $('comment').hidden = false;
-  placeToolbar();
-}
-
-async function sendAsk() {
-  const question = $('askInput').value;
-  closeAsk();
-  note('正在发送…');
-  try {
-    await conversation.ask(question);
-    note('已发送到对话');
-  } catch (e) {
-    note(`发送失败：${e.message}`);
-  }
 }
 
 // A short word in the toolbar itself; nothing pops up elsewhere.
@@ -490,7 +483,6 @@ function highlightSelection(color = palette()[0].color, type = 'highlight') {
     note('这篇 PDF 不是从 Zotero 打开的，批注无处保存');
     return Promise.resolve(null);
   }
-  closeAsk();
   const pending = annotations.create(sel, { color, type });
   selection.clear();
   return pending.catch(e => {
@@ -501,12 +493,33 @@ function highlightSelection(color = palette()[0].color, type = 'highlight') {
 }
 
 // The toolbar's 评论: highlight and start typing the comment, in one step.
-function commentSelection() {
-  highlightSelection().then(key => {
-    if (!key) return;
-    popup.open(key);
-    popup.edit();
-  });
+async function commentSelection() {
+  const sel = selection?.current;
+  if (!sel || commentSelection.pending) return;
+  if (!annotations.available) return note('这篇 PDF 不是从 Zotero 打开的，批注无处保存');
+  commentSelection.pending = true;
+  let pendingKey;
+  try {
+    await annotations.create(sel, { color: palette()[0].color,
+      onPending(key) {
+        pendingKey = key;
+        selection.clear();
+        popup.open(key);
+        popup.pendingCreate = true;
+        popup.render();
+        popup.edit();
+      },
+      onCommitted(key) {
+        if (popup.key === pendingKey) popup.key = key;
+      },
+    });
+    popup.finishCreate();
+  } catch (e) {
+    popup.pendingCreate = false;
+    if (popup.key === pendingKey) popup.close();
+    selection.set(sel);
+    note(`评论创建失败：${e.message}`);
+  } finally { commentSelection.pending = false; }
 }
 
 function jumpTo(a) {
@@ -516,7 +529,7 @@ function jumpTo(a) {
 }
 
 async function copySelection() {
-  const text = selection?.current?.kind === 'text' ? selection.current.text : '';
+  const text = selection?.current?.text || '';
   if (!text) return;
   try {
     await navigator.clipboard.writeText(text);
@@ -582,19 +595,17 @@ function runAction(id) {
 }
 
 function onKey(e) {
+  if (e.key === 'Escape' && researchPanel && !$('researchPreview').hidden) { e.preventDefault(); researchPanel.closePreview(); return; }
+  if (e.key === 'Escape' && researchPanel && !$('researchPanel').hidden) { e.preventDefault(); researchPanel.close(); return; }
   if (e.key === 'Alt') document.body.classList.add('alt');
   if (['annComment', 'findInput', 'search'].includes(e.target.id)) return; // these handle their own keys
-  if (e.target.closest?.('#settings') && e.target.matches('input[type=text], textarea')) return;
-  if (e.target.id === 'askInput') {
-    if (e.key === 'Enter' && !e.isComposing) sendAsk();
-    if (e.key === 'Escape') closeAsk();
-    return;
-  }
+  if (e.target.closest?.('#settings') && e.target.matches('input[type=text], input[type=password], textarea')) return;
   if (e.target.id === 'pageInput') {
     if (e.key === 'Enter') closePageInput(true);
     if (e.key === 'Escape') closePageInput(false);
     return;
   }
+  if (e.key !== 'Escape' && e.target.matches?.('input, textarea, select')) return;
   // Fixed keys first: ⌘1–9 tabs, Esc, ⌘C, 1–9 colors.
   if (e.metaKey && !e.shiftKey && !e.altKey && /^Digit[1-9]$/.test(e.code)) {
     const t = e.code === 'Digit9' ? tabs.at(-1) : tabs[Number(e.code.slice(5)) - 1];
@@ -609,6 +620,7 @@ function onKey(e) {
     else if (!$('tocDrawer').hidden) closeToc();
     else if (find.isOpen) find.close();
     else if (popup.isOpen) popup.close();
+    else if (!$('ocrPanel').hidden) ocr.close();
     else if (settings.isOpen) closeSettings();
     else if (drawer.isOpen) drawer.close();
     else selection?.clear();
@@ -657,8 +669,17 @@ function toggleDrawer() {
 async function poll() {
   try {
     const r = await host.call('panel_poll', { instance, seen: navSeen });
+    if ('readerSession' in r && conversation.readerSession !== r.readerSession) {
+      conversation.readerSession = r.readerSession; conversation.schedule();
+    }
+    if (r.prefsRevision !== undefined && r.prefsRevision !== prefsSeen) {
+      prefsSeen = r.prefsRevision;
+      applyPrefs((await host.call('prefs_get')).prefs);
+      if (settings.isOpen) settings.render();
+    }
     if (r.superseded) {
       conversation.retire();
+      interactions?.destroy(); researchPanel?.destroy();
       annotations.stop();
       popup.close();
       drawer.close();
@@ -683,8 +704,10 @@ async function start() {
   showMessage('正在打开…');
   try {
     const hello = await host.call('panel_hello', { instance });
+    reader.remote = !!host.remote && hello.features?.wholePage===true;
+    conversation.readerSession = hello.readerSession || null;
     prefs = hello.prefs;
-    Object.assign(timing, hello.timing || {});
+    Object.assign(timing, host.remote ? remoteTiming : hello.timing || {});
     keys = keymap(prefs.keys);
     tabs = hello.tabs;
     navSeen = hello.navSeq;
@@ -703,15 +726,18 @@ async function main() {
     scroller: $('scroller'),
     content: $('content'),
     call: host.call,
+    remote: host.remote,
     topInset: BAR,
     onPage: page => {
       updateBar(page);
       conversation.schedule();
+      blocks?.prefetch([page]);
     },
     onPageCreated: k => {
       annotations?.draw(k);
       find?.draw(k);
       selection?.draw(k);
+      contexts?.draw(k);
     },
     onImageError: reason => showMessage(`页面图片无法显示：${reason}`, true),
     onIdle: position => {
@@ -719,10 +745,16 @@ async function main() {
       updateBar();
       selection.prefetch(range(...reader.range(0)));
       links.prefetch(range(...reader.range(0)));
+      blocks?.prefetch(range(...reader.range(0)));
+      contexts?.relayout();
       host.call('position_save', { docId: doc.id, ...position }).catch(() => {});
     },
   });
-  annotations = new AnnotationLayer({ reader, call: host.call, onChange: () => { popup.render(); popup.place(); drawer.render(); } });
+  annotations = new AnnotationLayer({ reader, call: host.call, onChange: () => {
+    popup.render(); popup.place(); drawer.render();
+    if (annotations.doc) conversation.setAnnotationStatus(annotations.doc.id, { count: annotations.items.length,
+      comments: annotations.items.filter(a => a.comment).length, version: annotations.rev, pending: annotations.pending, error: annotations.error });
+  } });
   const openUrl = url => (host.app ? host.app.openLink({ url }).catch(() => {}) : window.open(url, '_blank', 'noopener'));
   popup = new AnnotationPopup({ layer: annotations, openUrl, palette });
   drawer = new AnnotationDrawer({
@@ -730,11 +762,11 @@ async function main() {
     listNotes: async () => (doc ? host.call('notes_list', { docId: doc.id }) : { notes: [], map: null }),
     generateMap: () => host.call('map_generate', { docId: doc.id }), palette,
   });
-  settings = new Settings({ call: host.call, getPrefs: () => prefs, onChange: applyPrefs });
+  settings = new Settings({ call: host.call, getPrefs: () => prefs, onChange: applyPrefs, openUrl });
   home = new Home({ call: host.call, onOpen: openTab, onLeave: leaveHome });
   selection = new Selection({
     reader, call: host.call, onChange: onSelection,
-    onClick: (k, pt) => {
+    onClick: (k, pt, event) => {
       const link = links.hit(k, pt);
       if (link) {
         popup.close();
@@ -742,10 +774,28 @@ async function main() {
       }
       const a = annotations.hit(k, pt);
       if (a) popup.open(a.key);
-      else popup.close();
+      else { popup.close(); blocks?.select(k, pt, event); }
     },
   });
   conversation = new Conversation({ host, reader, selection });
+  const analysisNotice = message => {
+    $('analysisNotice').textContent = message; $('analysisNotice').hidden = false;
+    clearTimeout(analysisNotice.timer); analysisNotice.timer = setTimeout(() => { $('analysisNotice').hidden = true; }, 5000);
+  };
+  contexts = new ContextBlocks({ host, reader, selection, onChange: () => conversation.schedule(), onNote: analysisNotice,
+    onNavigate: async item => {
+      if (doc?.id !== item.docId || home.isOpen) await openTab({ docId: item.docId });
+      if (doc?.id !== item.docId) throw new Error('无法打开这篇论文');
+      reader.scrollToPoint(item.page, item.rect[1]); reader.refresh(); updateBar();
+    } });
+  conversation.contextBlocks = contexts;
+  researchPanel = new ResearchPanel({ host, onChange: () => conversation.schedule(), prepare: async () => { await conversation.sync(); await conversation.publishQueue; analysisNotice('研究文献已加入上下文，请在 ChatGPT 对话框中提出问题'); } });
+  conversation.research = researchPanel;
+  blocks = new Blocks({ reader, selection, call: host.call, enabled: () => prefs.layoutEnabled !== false,
+    onNote: analysisNotice, onAdd: () => contexts.add() });
+  ocr = new OcrPanel({ reader, call: host.call, onError: analysisNotice, onStatus: (id, status) => conversation.setFullTextStatus(id, status), onChanged: () => {
+    blocks.reset(); blocks.prefetch(range(...reader.range(0))); selection.texts.clear(); conversation.schedule();
+  } });
   find = new Find({ reader, selection });
   links = new Links({
     reader, call: host.call, pointAt: (e, el, k) => selection.pointAt(e, el, k), textFor: k => selection.textFor(k), onMove: () => updateBar(),
@@ -758,8 +808,15 @@ async function main() {
   window.addEventListener('blur', () => document.body.classList.remove('alt'));
   $('scroller').addEventListener('scroll', () => requestAnimationFrame(() => { placeToolbar(); popup.place(); }), { passive: true });
   // The toolbar must not take the click as a "click on the page", which would clear the selection.
-  $('toolbar').addEventListener('mousedown', e => { if (e.target.id !== 'askInput') e.preventDefault(); e.stopPropagation(); });
-  $('ask').addEventListener('click', openAsk);
+  $('toolbar').addEventListener('mousedown', e => { if (!e.target.matches('input, textarea, select')) e.preventDefault(); e.stopPropagation(); });
+  $('addContext').addEventListener('click', () => contexts.add());
+  $('layoutButton').addEventListener('click', async () => {
+    try { applyPrefs((await host.call('prefs_set', { layoutEnabled: prefs.layoutEnabled === false })).prefs); } catch(e) { analysisNotice(e.message); }
+  });
+  $('ocrButton').addEventListener('click', () => {
+    if ($('ocrPanel').hidden) { closeSettings(); ocr.open(); } else ocr.close();
+    $('ocrButton').setAttribute('aria-expanded', String(!$('ocrPanel').hidden));
+  });
   $('comment').addEventListener('click', commentSelection);
   $('highlight').addEventListener('click', () => highlightSelection());
   $('annButton').addEventListener('click', toggleDrawer);
@@ -792,12 +849,23 @@ async function main() {
   $('settingsButton').addEventListener('click', toggleSettings);
   $('settingsClose').addEventListener('click', closeSettings);
   $('retry').addEventListener('click', start);
+  window.__research = researchPanel; window.__blocks = blocks; window.__contexts = contexts; window.__ocr = ocr;
   window.__reader = reader; // for acceptance tests that read metrics from the DOM
   window.__selection = selection;
   window.__annotations = annotations;
   window.__find = find;
   window.__links = links;
   await start();
+  interactions = new Interactions({ host, reader, selection, conversation, contexts, openTab, showHome, notify: analysisNotice,
+    showFile: opened => { tabs = opened.tabs; showTab(opened.active); } });
+  interactions.start();
+  if (host.app) host.app.onteardown = async () => {
+    interactions.destroy(); researchPanel?.destroy();
+    clearTimeout(conversation.timer);
+    if (doc && reader.doc) await host.call('position_save', { docId: doc.id, ...reader.position() }).catch(() => {});
+    annotations.stop();
+    return {};
+  };
   poll();
 }
 

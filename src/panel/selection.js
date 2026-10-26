@@ -43,11 +43,11 @@ export class Selection {
 
   down(e) {
     const el = e.target.closest?.('.page');
-    if (e.button !== 0 || !el || !this.reader.doc) return;
+    if (e.button !== 0 || !el || !this.reader.doc || e.target.closest('button')) return;
     e.preventDefault(); // no native image drag or text selection
     const k = Number(el.dataset.page);
     const pt = this.pointAt(e, el, k);
-    this.drag = { kind: e.altKey ? 'region' : 'text', k, el, start: pt, last: pt, x: e.clientX, y: e.clientY, clicks: e.detail, moved: false, text: null };
+    this.drag = { kind: e.altKey ? 'region' : 'text', k, el, start: pt, last: pt, x: e.clientX, y: e.clientY, clicks: e.detail, event: { shiftKey: e.shiftKey }, moved: false, text: null };
     if (this.drag.kind === 'text') {
       const drag = this.drag;
       this.textFor(k).then(text => {
@@ -94,12 +94,12 @@ export class Selection {
       const r = this.current?.kind === 'region' ? this.current.rect : null;
       if (!d.moved || !r || r[2] < MIN_REGION_PT || r[3] < MIN_REGION_PT) {
         this.set(null);
-        if (!d.moved) this.onClick?.(d.k, d.start);
+        if (!d.moved) this.onClick?.(d.k, d.start, d.event);
       }
       else this.set(this.current);
     } else if (!d.moved && d.clicks < 2) {
       this.set(null); // a plain click clears
-      this.onClick?.(d.k, d.start);
+      this.onClick?.(d.k, d.start, d.event);
     } else if (this.current) {
       this.set(this.current);
     }
@@ -139,6 +139,7 @@ export class Selection {
     const place = (cls, [x, y, w, h]) => {
       const n = document.createElement('div');
       n.className = cls;
+      if (cls === 'region') n.dataset.blockType = s.block?.type || 'region';
       Object.assign(n.style, { left: `${((x - rx) / rw) * 100}%`, top: `${((y - ry) / rh) * 100}%`, width: `${(w / rw) * 100}%`, height: `${(h / rh) * 100}%` });
       pg.overlay.appendChild(n);
     };

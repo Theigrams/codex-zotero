@@ -8,9 +8,11 @@ import { z } from 'zod';
 import { createServer } from 'node:http';
 import { readFile } from 'node:fs/promises';
 import { homedir } from 'node:os';
-import { dirname, join } from 'node:path';
+import { dirname, join, isAbsolute } from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { RENDER_MODES } from '../shared/layout.mjs';
+import { DocumentAnalysis } from './analysis.mjs';
+import { DocumentWorker } from './document-worker.mjs';
+import { MinerU } from './mineru.mjs';
 import { Annotations } from './annotations.mjs';
 import { Documents, summary } from './documents.mjs';
 import { HelperPool } from './helpers.mjs';
@@ -24,24 +26,40 @@ import { Paper } from './paper.mjs';
 import { State } from './state.mjs';
 import { TextService } from './text.mjs';
 import { modelTools } from './tools.mjs';
+import { modelToolMetadata, modelToolResult } from './tool-policy.mjs';
 import { resolvePdf, searchAnnotations, searchLibrary } from './zotero.mjs';
+import { registerExtensions } from './extensions.mjs';
+import { Research, researchTools } from './research.mjs';
+import { startLocalBridge } from '../bridge/local.mjs';
+import { bridgeDefinitions } from '../bridge/tools.mjs';
+import { jsonFile } from './files.mjs';
+import { atomicJSON } from './files.mjs';
+import { TunnelManager } from './tunnel.mjs';
+import { appSchemas } from './app-schemas.mjs';
+import { validateRemoteAppCall } from '../bridge/ui-policy.mjs';
 
 const here = dirname(fileURLToPath(import.meta.url));
 const argv = process.argv.slice(2);
 const option = name => (argv.includes(name) ? argv[argv.indexOf(name) + 1] : undefined);
-const URI = 'ui://codex-zotero/reader-v1.html';
+const URI = 'ui://codex-zotero/reader-v5.html';
+const PREVIEW_URI = 'ui://codex-zotero/paper-preview-v1.html';
+const SETTINGS_URI = 'ui://codex-zotero/settings-v1.html';
+const entryIcon = ['light', 'dark'].map(theme => ({ theme, mimeType: 'image/svg+xml', sizes: ['any'],
+  src: 'data:image/svg+xml,' + encodeURIComponent(`<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 20 20" fill="none" stroke="${theme === 'dark' ? '#f5f5f5' : '#242424'}" stroke-width="1.33"><path d="M10 5C7 3 4 3 2 4v12c3-1 5-1 8 1 3-2 5-2 8-1V4c-2-1-5-1-8 1Zm0 0v12"/></svg>`),
+}));
+let prefsRevision = 0;
 
 const pool = new HelperPool(join(here, 'pdfkit-helper'), Number(process.env.CODEX_ZOTERO_HELPERS) || 4); // 4: zoom gets sharp in ~150ms instead of ~210ms (preflight)
 const documents = new Documents({
   pool, cacheRoot: process.env.CODEX_ZOTERO_CACHE || join(homedir(), 'Library', 'Caches', 'codex-zotero'),
 });
-const renderer = new Renderer(pool);
+const renderer = new Renderer(pool,{python:process.env.CODEX_ZOTERO_PYTHON || '',compressScript:join(here,'compress_image.py')});
 const stateRoot = process.env.CODEX_ZOTERO_STATE || join(homedir(), '.codex', 'codex-zotero');
 const state = new State(stateRoot);
 // CODEX_ZOTERO_FAST=1 (the browser preflight only): shorter waits everywhere, so the checks need not sit through
 // the real 3-second polls and 2-second retry backoff.
 const FAST = process.env.CODEX_ZOTERO_FAST === '1';
-const annotations = new Annotations({ root: stateRoot, palette: async () => (await state.prefs()).palette, ...(FAST ? { backoff: [200, 500, 1500, 3000, 6000] } : {}) });
+const annotations = new Annotations({ root: argv.includes('--bridge-service')?join(stateRoot,'web-reader'):stateRoot, authRoot:stateRoot, palette: async () => (await state.prefs()).palette, ...(FAST ? { backoff: [200, 500, 1500, 3000, 6000] } : {}) });
 // MuPDF text repair reuses the PyMuPDF environment the 0.12.0 prototype installed on this machine.
 const text = new TextService({
   pool, script: join(here, 'text_server.py'),
@@ -49,6 +67,14 @@ const text = new TextService({
   python: process.env.CODEX_ZOTERO_PYTHON || '',
 });
 
+const analysis = new DocumentAnalysis({
+  preferences: () => state.prefs(),
+  worker: new DocumentWorker({ python: process.env.CODEX_ZOTERO_PYTHON || '', script: join(here, 'document_worker.py'),
+    model: process.env.CODEX_ZOTERO_LAYOUT_MODEL || join(homedir(), '.cache', 'codex-zotero', 'models', 'pp-doclayout-v2.onnx') }),
+  mineru: new MinerU({ api: process.env.CODEX_ZOTERO_MINERU_API || undefined, secretFile: join(stateRoot, 'mineru-secret.json') }),
+});
+async function readerPrefs() { return { ...await state.prefs(), mineruConfigured: await analysis.mineru.configured() }; }
+text.ocrText = (doc, page) => analysis.pageText(doc, page);
 const paper = new Paper(text);
 const maps = new PaperMaps({ writer: annotations.writer, paper, pool, settings: () => state.prefs() });
 const readingNotes = new ReadingNotes({ writer: annotations.writer, paper, pool, settings: () => state.prefs() });
@@ -149,9 +175,42 @@ async function navigate(doc, target) {
   return Date.now() - lastPoll < 5000;
 }
 
-const ctx = { annotations, maps, readingNotes, paper, pool, state, docById, activeDoc, paperTab, tabsView, view: () => view, navigate, searchLibrary, searchAnnotations, live: () => live, asked: () => asked };
-const forModel = modelTools(ctx);
+// Background research resolves papers without opening or replacing the active tab.
+const researchDocs = new Map();
+async function researchDoc(itemKey, { remember = true } = {}) {
+  let entry = researchDocs.get(itemKey);
+  if (!entry || Date.now() - entry.at >= 30000) {
+    entry = { at: Date.now(), remembered: false,
+      promise: resolvePdf({ itemKey }).then(source => documents.open(source, { background: true })) };
+    researchDocs.set(itemKey, entry);
+  }
+  try {
+    const doc = await entry.promise;
+    // Rendering a search thumbnail must not populate the user's reading history.
+    if (remember && !entry.remembered) { await state.touch(doc); entry.remembered = true; }
+    return doc;
+  } catch(e) { researchDocs.delete(itemKey); throw e; }
+}
 
+const research = new Research({ resolve: researchDoc, analysis, annotations, renderer, search: searchLibrary, recent: () => state.recent(20) });
+
+const ctx = {
+  analysis, annotations, maps, readingNotes, paper, pool, state, docById, activeDoc, paperTab, tabsView, view: () => view, navigate, searchLibrary, searchAnnotations, live: () => live, asked: () => asked };
+const forModel = modelTools(ctx);
+const forResearch = researchTools(research);
+let chatBridge = null;
+async function setChatBridge(enabled) {
+  if(enabled && !chatBridge) chatBridge = await startLocalBridge({ root:stateRoot, definitions:bridgeDefinitions({...forModel,...forResearch}),
+    appCall:async(name,args)=>{const validated=validateRemoteAppCall(name,args);if(validated.docId&&!validated.docId.startsWith('note:'))await docById(validated.docId);return appTools[name](validated);},
+    describe:async()=>{
+      const record=live?.docId ? await state.document(live.docId) : null;
+      return { document:record ? {docId:live.docId,title:record.title,itemKey:record.itemKey} : null,
+        live:Date.now()-lastPoll<15000 };
+    },
+  });
+  if(!enabled && chatBridge) {const old=chatBridge;chatBridge=null;await old.close();}
+  await atomicJSON(join(stateRoot,'chat-bridge-enabled.json'),{enabled});
+}
 const CAPTION_KIND = { fig: '图', tab: '表', alg: '算法' };
 async function outlineX(doc, page, y, kind) {
   const o = await buildOutline(doc, ctx).catch(() => null);
@@ -162,6 +221,29 @@ async function outlineX(doc, page, y, kind) {
 }
 
 const appTools = {
+  async tunnel_status() {return tunnel.status();},
+  async tunnel_configure(args) {return tunnel.configure(args);},
+  async tunnel_install() {return tunnel.install();},
+  async tunnel_start() {return tunnel.start();},
+  async tunnel_stop(args) {return tunnel.stop(args);},
+  async research_choose({ query = '' }) { return { requiresSelection: true, papers: await research.candidates(query) }; },
+  async research_candidates({ query = '' }) { return { papers: await research.candidates(query) }; },
+  async research_prepare({ itemKeys }) { return research.status(itemKeys); },
+  async research_preview_data({ itemKey, page = 1, detail = false }) { return research.preview(itemKey, page, detail); },
+  ...Object.fromEntries(Object.entries(forResearch).map(([name, tool]) => [name, tool.run])),
+  async layout_page({ docId, page }) { return analysis.layout(documents.get(docId), page); },
+  async ocr_job_status({ docId }) { return analysis.status(documents.get(docId)); },
+  async ocr_job_start({ docId, force }) { return analysis.start(documents.get(docId), { force }); },
+  async ocr_job_cancel({ docId }) { return analysis.cancel(documents.get(docId)); },
+  async mineru_configure({ apiKey }) { await analysis.mineru.configure(apiKey); prefsRevision++; return { prefs: await readerPrefs() }; },
+  async document_file({ docId }) { return { path: (await docById(docId)).path }; },
+  async file_open(_args, extra) {
+    const path = extra?._meta?.['openai/resource']?.path;
+    if (typeof path !== 'string' || !isAbsolute(path)) throw new Error('宿主未提供已授权的 PDF 文件，请从 Zotero 打开。');
+    const doc = await openSource({ path });
+    return { ...(await tabsView()), active: await opened(doc) };
+  },
+  async prefs_get() { return { prefs: await readerPrefs() }; },
   async panel_hello({ instance }) {
     activeInstance = instance;
     lastPoll = Date.now();
@@ -175,12 +257,12 @@ const appTools = {
         error = e.message;
       }
     }
-    return { prefs: await state.prefs(), ...view, active, error, navSeq: nav.seq, ...(FAST ? { timing: { navPollMs: 200, annotationsPollMs: 300, mapPollMs: 300 } } : {}) };
+    return { features:{wholePage:true}, prefs: await readerPrefs(), ...view, active, error, navSeq: nav.seq, readerSession:chatBridge?.id || null, ...(FAST ? { timing: { navPollMs: 200, annotationsPollMs: 300, mapPollMs: 300 } } : {}) };
   },
   async panel_poll({ instance, seen = 0 }) {
     const superseded = activeInstance !== null && instance !== activeInstance;
     if (!superseded) lastPoll = Date.now();
-    return { superseded, nav: !superseded && nav.seq > seen ? nav : null };
+    return { superseded, prefsRevision, readerSession:chatBridge?.id || null, nav: !superseded && nav.seq > seen ? nav : null };
   },
   async tab_open({ docId, itemKey }) {
     if (docId?.startsWith('note:')) {
@@ -249,6 +331,7 @@ const appTools = {
     const r = await renderer.strip(documents.get(args.docId), args);
     return { data: r.data, index: r.strip.index };
   },
+  async render_page(args) { return renderer.page(documents.get(args.docId), args); },
   async render_preview(args) {
     return renderer.preview(documents.get(args.docId), args);
   },
@@ -257,7 +340,9 @@ const appTools = {
     return { saved: true };
   },
   async prefs_set(patch) {
-    return { prefs: await state.setPrefs(patch) };
+    await state.setPrefs(patch);
+    prefsRevision++;
+    return { prefs: await readerPrefs() };
   },
   async page_text({ docId, page }) {
     return text.page(documents.get(docId), page);
@@ -304,58 +389,6 @@ const appTools = {
   },
 };
 
-const rect = z.array(z.number()).length(4);
-const color = z.string().regex(/^#[0-9a-fA-F]{6}$/);
-
-const selectionSchema = z.object({
-  kind: z.enum(['text', 'region']), page: z.number().int().min(1), text: z.string().max(20000).optional(),
-  rects: z.array(rect).max(200).optional(), rect: rect.optional(), a: z.number().int().optional(),
-});
-const appSchemas = {
-  panel_hello: { instance: z.string().max(40) },
-  panel_poll: { instance: z.string().max(40), seen: z.number().int().min(0).optional() },
-  tab_open: { docId: z.string().optional(), itemKey: z.string().regex(/^[A-Z0-9]{8}$/).optional() },
-  tab_close: { docId: z.string() },
-  tab_order: { tabs: z.array(z.string()).max(20), active: z.string().nullable() },
-  home_list: { query: z.string().max(200).optional() },
-  notes_list: { docId: z.string() },
-  map_generate: { docId: z.string() },
-  note_position_save: { key: z.string().regex(/^[A-Z0-9]{8}$/), top: z.number().min(0).max(1) },
-  note_jump: {
-    ref: z.string().max(20000).optional(), attachmentKey: z.string().regex(/^[A-Z0-9]{8}$/).optional(), page: z.number().int().min(1).optional(),
-    x: z.number().optional(), y: z.number().optional(), kind: z.enum(['eq', 'fig', 'tab', 'alg']).optional(),
-  },
-  panel_report: {
-    view: z.enum(['paper', 'note', 'home']).optional(), note: z.object({ key: z.string(), title: z.string() }).nullable().optional(),
-    docId: z.string().nullable(), page: z.number().int().min(1).optional(), visible: z.array(z.number().int()).length(2).optional(),
-    selection: selectionSchema.nullable().optional(),
-    asked: selectionSchema.optional(),
-  },
-  render_strip: {
-    docId: z.string(), page: z.number().int().min(1), mode: z.enum(RENDER_MODES), cssWidth: z.number().positive().max(8000),
-    dpr: z.number().positive().max(4), index: z.number().int().min(0), crop: z.boolean().optional(), priority: z.number().int().min(0).max(3).optional(),
-  },
-  render_preview: { docId: z.string(), page: z.number().int().min(1), crop: z.boolean().optional() },
-  position_save: { docId: z.string(), page: z.number().int().min(1), offset: z.number(), zoom: z.number() },
-  prefs_set: {
-    renderMode: z.enum(RENDER_MODES).optional(),
-    palette: z.array(z.object({ color: z.string(), tag: z.string() })).max(9).nullable().optional(),
-    keys: z.record(z.string(), z.string().nullable()).optional(),
-    mapPrompt: z.string().max(20000).optional(), mapModel: z.string().max(60).optional(), mapEffort: z.enum(['', 'low', 'medium', 'high']).optional(), readingQuestions: z.string().max(20000).optional(),
-  },
-  page_text: { docId: z.string(), page: z.number().int().min(1) },
-  selection_image: { docId: z.string(), page: z.number().int().min(1), rect, scale: z.number().positive().max(3).optional() },
-  page_links: { docId: z.string(), page: z.number().int().min(1) },
-  annotations_list: { docId: z.string(), since: z.string().optional() },
-  annotation_create: {
-    docId: z.string(), kind: z.enum(['text', 'region']), page: z.number().int().min(1), rects: z.array(rect).min(1).max(200),
-    text: z.string().max(20000).optional(), offset: z.number().int().min(0).optional(), color: color.optional(), type: z.enum(['highlight', 'underline']).optional(),
-  },
-  annotation_update: { docId: z.string(), key: z.string().regex(/^[A-Z0-9]{8}$/), comment: z.string().max(20000).optional(), color: color.optional() },
-  annotation_delete: { docId: z.string(), key: z.string().regex(/^[A-Z0-9]{8}$/) },
-  annotation_undo: { docId: z.string() },
-  annotation_retry: { docId: z.string(), id: z.string().optional(), discard: z.boolean().optional() },
-};
 
 async function openReader({ itemKey, attachmentKey } = {}) {
   const tabs = await tabsView();
@@ -367,18 +400,35 @@ async function openReader({ itemKey, attachmentKey } = {}) {
   return { text, document: doc && { id: doc.id, title: doc.title, itemKey: doc.itemKey, pageCount: doc.pageCount } };
 }
 
-function shutdown() {
+let shuttingDown=false;
+async function shutdown() {
+  if(shuttingDown)return;shuttingDown=true;
+  await chatBridge?.close();
+  research.close();
+  analysis.close();
   pool.close();
   text.close();
   process.exit(0);
 }
 
-if (argv.includes('--standalone')) {
+if (argv.includes('--chat-bridge') || (await jsonFile(join(stateRoot, 'chat-bridge-enabled.json'), {})).enabled === true) {
+  await setChatBridge(true);
+}
+const tunnel = new TunnelManager({root:stateRoot,bridgeFile:join(here,'chat-bridge.mjs'),setBridge:setChatBridge,getBridge:()=>chatBridge,
+  binary:process.env.CODEX_ZOTERO_TUNNEL_BINARY || undefined});
+if(!argv.includes('--standalone')&&!argv.includes('--bridge-service'))setTimeout(()=>tunnel.resume().catch(()=>{}),1000).unref();
+
+
+if(argv.includes('--bridge-service')){
+  process.send?.({type:'reader-ready',readerSession:chatBridge.id});
+  process.stdin.resume();process.stdin.on('end',shutdown);process.stdin.on('close',shutdown);process.on('SIGTERM',shutdown);
+} else if (argv.includes('--standalone')) {
   // Browser preflight: same panel, tools reached over HTTP instead of the Codex host bridge.
   if (option('--pdf')) await openSource({ path: option('--pdf') });
   else if (option('--item')) await openSource(await resolvePdf({ itemKey: option('--item') }));
   const http = createServer(async (req, res) => {
     try {
+      if (req.url?.startsWith('/paper-preview')) { res.setHeader('Content-Type', 'text/html; charset=utf-8'); return res.end(await readFile(join(here, 'paper-preview.html'), 'utf8')); }
       if (req.url === '/panel') {
         res.setHeader('Content-Type', 'text/html; charset=utf-8');
         // Mirror what the Codex panel sandbox allows, so the preflight fails where Codex would:
@@ -387,9 +437,24 @@ if (argv.includes('--standalone')) {
           "default-src 'none'; script-src 'unsafe-inline'; style-src 'unsafe-inline'; img-src data:; connect-src 'self'");
         return res.end(await readFile(join(here, 'panel.html')));
       }
+      if (req.url === '/settings') {
+        res.setHeader('Content-Type', 'text/html; charset=utf-8');
+        return res.end(await readFile(join(here, 'settings.html')));
+      }
       if (req.url === '/host') {
         res.setHeader('Content-Type', 'text/html; charset=utf-8');
         return res.end(await readFile(join(here, 'host.html')));
+      }
+      if (req.url === '/api/tool' && req.method === 'POST') {
+        let body = ''; for await (const chunk of req) body += chunk;
+        const { name, arguments: args = {} } = JSON.parse(body);
+        res.setHeader('Content-Type', 'application/json');
+        try {
+          const tool = forModel[name] || forResearch[name];
+          if (tool) return res.end(JSON.stringify(modelToolResult(name, await tool.run(z.object(tool.schema).parse(args)))));
+          if (!appTools[name]) throw new Error('Unknown tool');
+          return res.end(JSON.stringify({ content: [], structuredContent: await appTools[name](z.object(appSchemas[name]).parse(args)) }));
+        } catch(e) { return res.end(JSON.stringify({ isError: true, content: [{type:'text',text:e.message}] })); }
       }
       if (req.url === '/api/call' && req.method === 'POST') {
         let body = '';
@@ -406,7 +471,7 @@ if (argv.includes('--standalone')) {
         const { name, arguments: args } = JSON.parse(body);
         res.setHeader('Content-Type', 'application/json');
         try {
-          return res.end(JSON.stringify(await forModel[name].run(args || {})));
+          return res.end(JSON.stringify(await ({...forModel,...forResearch})[name].run(args || {})));
         } catch (e) {
           return res.end(JSON.stringify({ error: e.message }));
         }
@@ -423,19 +488,62 @@ if (argv.includes('--standalone')) {
   });
   process.on('SIGTERM', shutdown);
 } else {
-  const server = new McpServer({ name: 'codex-zotero', version: '0.1.0' });
+  const server = new McpServer({ name: 'codex-zotero', version: '0.1.0', icons: entryIcon });
   const ok = (data, text = 'ok') => ({ content: [{ type: 'text', text }], structuredContent: data });
   const fail = e => ({ isError: true, content: [{ type: 'text', text: e.message }] });
+  registerExtensions(server, { state, searchLibrary, research, prefsChanged: () => { prefsRevision++; } });
 
   registerAppResource(server, 'reader', URI, { mimeType: RESOURCE_MIME_TYPE }, async () => ({
     contents: [{
       uri: URI, mimeType: RESOURCE_MIME_TYPE, text: await readFile(join(here, 'panel.html'), 'utf8'),
       _meta: {
         ui: { prefersBorder: false },
-        'openai/ui': { availableDisplayModes: ['inline', 'fullscreen'], preferredDisplayMode: 'fullscreen' },
+        'openai/ui': { availableDisplayModes: ['fullscreen'], preferredDisplayMode: 'fullscreen' },
       },
     }],
   }));
+
+  registerAppResource(server, 'paper-preview', PREVIEW_URI, { mimeType: RESOURCE_MIME_TYPE }, async () => ({ contents: [{
+    uri: PREVIEW_URI, mimeType: RESOURCE_MIME_TYPE, text: await readFile(join(here, 'paper-preview.html'), 'utf8'),
+    _meta: { ui: { prefersBorder: false }, 'openai/ui': { availableDisplayModes: ['inline','fullscreen'], preferredDisplayMode: 'inline' } },
+  }] }));
+  registerAppTool(server, 'research_preview', {
+    title: '论文预览', description: 'Preview a selected Zotero paper without replacing the active reader or starting OCR.',
+    inputSchema: { itemKey: z.string().regex(/^[A-Z0-9]{8}$/), page: z.number().int().min(1).default(1) },
+    annotations: { readOnlyHint: true }, _meta: { ui: { resourceUri: PREVIEW_URI, visibility: ['app'] } },
+  }, async ({itemKey,page}) => {
+    try { return ok(await research.preview(itemKey,page,true)); } catch(e) { return fail(e); }
+  });
+
+  registerAppResource(server, 'settings', SETTINGS_URI, { mimeType: RESOURCE_MIME_TYPE }, async () => ({ contents: [{
+    uri: SETTINGS_URI, mimeType: RESOURCE_MIME_TYPE, text: await readFile(join(here, 'settings.html'), 'utf8'),
+    _meta: { ui: { prefersBorder: false }, 'openai/ui': { availableDisplayModes: ['inline', 'fullscreen'], preferredDisplayMode: 'inline' } },
+  }] }));
+  registerAppTool(server, 'reader_settings', {
+    title: '设置与连接', description: 'Open private reader settings for MinerU credentials and optional private Chat tunnel setup. Credentials are entered only in the app.', inputSchema: {},
+    annotations: { readOnlyHint: true }, _meta: { ui: { resourceUri: SETTINGS_URI, visibility: ['app'] } },
+  }, async () => ok({ view: 'settings' }));
+  registerAppTool(server, 'reader_library', {
+    title: 'Zotero 文库', description: 'Browse the Zotero library.', inputSchema: {}, annotations: { readOnlyHint: true },
+    _meta: { ui: { resourceUri: URI, visibility: ['app'] }, 'openai/ui': { entrypoints: [{ type: 'global', quickAction: { title: '继续阅读', icons: entryIcon, target: { type: 'tool', name: 'reader_resume', arguments: {} } } }] } },
+  }, async () => ok({ view: 'library' }));
+  registerAppTool(server, 'reader_resume', {
+    title: '继续阅读', description: 'Resume the last open paper or note in the reader. Show the library when no tab is open.',
+    inputSchema: {}, annotations: { readOnlyHint: true },
+    _meta: { ui: { resourceUri: URI, visibility: ['app'] } },
+  }, async () => {
+    try {
+      const tabs = await tabsView();
+      const active = tabs.active ? await openedTab(tabs.active) : null;
+      return ok({ ...tabs, view: active ? 'reader' : 'library', active });
+    } catch (e) { return fail(e); }
+  });
+  registerAppTool(server, 'reader_file', {
+    title: '用 Zotero 阅读器打开 PDF', description: 'Read a PDF authorized by the host file viewer.',
+    inputSchema: { file: z.object({ name: z.string().min(1), resourceUri: z.string().min(1) }) },
+    annotations: { readOnlyHint: true },
+    _meta: { ui: { resourceUri: URI, visibility: ['app'] }, 'openai/ui': { entrypoints: [{ type: 'file', extensions: ['.pdf'] }] } },
+  }, async ({ file }) => ok({ view: 'file', file }));
 
   registerAppTool(server, 'reader_open', {
     title: 'Zotero 阅读器',
@@ -444,7 +552,7 @@ if (argv.includes('--standalone')) {
     annotations: { readOnlyHint: true, destructiveHint: false, openWorldHint: false },
     _meta: {
       ui: { resourceUri: URI, visibility: ['app', 'model'] },
-      'openai/ui': { entrypoints: [{ type: 'thread' }], preferredModelDisplayMode: 'fullscreen' },
+      'openai/ui': { entrypoints: [{ type: 'thread' }] },
     },
   }, async args => {
     try {
@@ -456,26 +564,23 @@ if (argv.includes('--standalone')) {
   });
 
   for (const [name, run] of Object.entries(appTools)) {
+    if (forResearch[name] || name === 'research_choose') continue;
     registerAppTool(server, name, {
       description: `Reader panel internal: ${name}`, inputSchema: appSchemas[name],
       _meta: { ui: { resourceUri: URI, visibility: ['app'] } },
-    }, async args => {
+    }, async (args, extra) => {
       try {
-        return ok(await run(args));
+        return ok(await run(args, extra));
       } catch (e) {
         return fail(e);
       }
     });
   }
 
-  for (const [name, tool] of Object.entries(forModel)) {
-    server.registerTool(name, { description: tool.description, inputSchema: tool.schema }, async args => {
-      try {
-        const r = await tool.run(args);
-        return ok(r.data ?? {}, r.text);
-      } catch (e) {
-        return fail(e);
-      }
+  for (const [name, tool] of Object.entries({ ...forModel, ...forResearch })) {
+    server.registerTool(name, { description: tool.description, inputSchema: tool.schema, ...modelToolMetadata(name) }, async args => {
+      try { return modelToolResult(name, await tool.run(args)); }
+      catch (e) { return fail(e); }
     });
   }
 

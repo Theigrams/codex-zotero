@@ -15,13 +15,20 @@ export class Documents {
   }
 
   // source: { path, title?, itemKey?, attachmentKey? } → document summary used by the panel and tools.
-  async open(source) {
+  async open(source, { background = false } = {}) {
     const bytes = await readFile(source.path);
     if (bytes.subarray(0, 1024).indexOf(Buffer.from('%PDF-')) < 0) throw new Error('附件不是 PDF。');
     const fingerprint = createHash('sha256').update(bytes).digest('hex');
     const id = fingerprint.slice(0, 16);
     const cached = this.byId.get(id);
-    if (cached) return Object.assign(cached, sourceFields(source));
+    if (cached) {
+      if (background) return { ...cached, ...sourceFields(source) };
+      // Opening the same PDF through the host file viewer must not unlink its
+      // already-known Zotero identity or discard its bibliographic title.
+      if (source.itemKey) Object.assign(cached, sourceFields(source));
+      else if (source.title && !cached.itemKey) cached.title = source.title;
+      return cached;
+    }
 
     const cacheDir = join(this.cacheRoot, id);
     const info = await this.pool.open(source.path);
@@ -41,7 +48,7 @@ export class Documents {
       unsupported: info.pages.some(p => p.rotation || p.originX || p.originY),
     };
     this.byId.set(id, doc);
-    return doc;
+    return background ? { ...doc } : doc;
   }
 
   get(id) {
