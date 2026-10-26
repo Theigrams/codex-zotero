@@ -22,6 +22,7 @@ export class AnnotationPopup {
       if (b) this.setColor(b.dataset.color);
     });
     $('annDelete').addEventListener('click', () => this.trash());
+    $('annClose').addEventListener('click', () => this.close());
     this.view.addEventListener('click', e => {
       const a = e.target.closest('a[href]');
       if (a) {
@@ -62,6 +63,7 @@ export class AnnotationPopup {
     this.close();
     this.key = key;
     this.editing = false;
+    this.closedWhilePending = false;
     this.layer.keepActive = true;
     this.layer.setActive(key);
     this.comment.value = this.layer.find(key)?.comment || '';
@@ -71,7 +73,15 @@ export class AnnotationPopup {
   }
 
   close() {
-    if (this.pendingCreate) return; // Preserve a typed draft until its annotation has a real key.
+    if (this.pendingCreate) {
+      // Keep the draft for the eventual create response, but honor Escape/click-away now.
+      this.closedWhilePending = true;
+      this.editing = false;
+      this.layer.keepActive = false;
+      this.layer.setActive(null);
+      this.el.hidden = true;
+      return;
+    }
     if (this.key === null) return;
     this.saveComment();
     this.key = null;
@@ -81,9 +91,17 @@ export class AnnotationPopup {
     this.el.hidden = true;
   }
 
+  finishCreate() {
+    const closed = this.closedWhilePending;
+    this.pendingCreate = false;
+    this.saveComment();
+    if (closed) this.close();
+    else this.render();
+  }
+
   // Called whenever the annotation list changes (a refresh from Zotero, or our own write).
   render() {
-    if (this.key === null) return;
+    if (this.key === null || (this.pendingCreate && this.closedWhilePending)) return;
     const a = this.layer.find(this.key);
     if (!a) {
       this.key = null; // deleted (here or in Zotero): nothing left to save

@@ -82,8 +82,10 @@ try {
  await frame.waitForFunction(()=>window.__annotations.items.some(a=>a.text==='Highlighted evidence'));
  await frame.evaluate(()=>window.__selection.set({kind:'text',page:1,text:'Commented evidence',rects:[[30,145,220,18]],a:8}));
  await frame.click('#comment');await frame.waitForSelector('#annComment',{visible:true,timeout:700});
- await frame.type('#annComment','Web annotation comment');await frame.$eval('#annComment',e=>e.blur());
+ await frame.type('#annComment','Web annotation comment');await frame.focus('#annComment');await page.keyboard.press('Escape');
+ assert.equal(await frame.$eval('#annPopup',e=>e.hidden),true,'Escape closes immediately while create is pending');
  await frame.waitForFunction(()=>window.__annotations.items.some(a=>a.comment==='Web annotation comment'));
+ assert.equal(await frame.$eval('#annPopup',e=>e.hidden),true,'create response must not reopen the closed editor');
  const pageOneCalls=calls.filter(c=>c.name==='render_page'&&c.arguments.page===1).length;
  if(doc.pageCount>=3){
   await frame.evaluate(()=>window.__reader.scrollToPage(3));

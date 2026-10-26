@@ -52,7 +52,7 @@ export class Interactions {
       buttons.forEach(b => { b.disabled = true; });
       try {
         const shown = await conversation.continueInChat({ addSelection: id === 'ask' });
-        if (shown) notify('上下文已准备好，请在 ChatGPT 对话框中输入问题');
+        if (shown) notify(host.remote ? '上下文已准备好，请点击 ChatGPT 输入框提问' : '上下文已准备好，请在 ChatGPT 对话框中输入问题');
       } finally { buttons.forEach(b => { b.disabled = false; }); }
     });
     this.registerTools();

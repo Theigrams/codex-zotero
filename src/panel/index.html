@@ -514,7 +514,7 @@
 <div id="contextTray" aria-label="已加入的上下文" hidden><span id="contextCount">上下文</span><ul id="contextList"></ul><button id="contextAsk" title="准备已加入的上下文，在原生对话框中提问">去提问</button><button id="contextClear">清空</button></div>
 <div id="toolbar" hidden>
   <button id="addContext" class="primary" title="把选中的内容加入 ChatGPT 上下文，不发送消息">加入上下文</button>
-  <button id="ask" title="加入当前选区，在原生对话框中提问">去提问</button>
+  <button id="ask" title="加入当前选区并返回对话，然后点击 ChatGPT 输入框提问">去提问</button>
   <button id="highlight" title="高亮（H；数字键换颜色，加 ⇧ 为下划线）">高亮</button>
   <button id="comment" title="高亮并写评论">评论</button>
   <span id="toolbarNote" hidden></span>
@@ -544,6 +544,7 @@
     <span id="annColors"></span>
     <span class="spacer"></span>
     <button id="annDelete" title="删除（⌘Z 撤销）">删除</button>
+    <button id="annClose" title="保存并关闭（Esc）" aria-label="保存并关闭评论">×</button>
   </div>
   <div id="annMeta"></div>
   <textarea id="annComment" rows="1" placeholder="评论（支持 Markdown 与 $公式$）" aria-label="评论"></textarea>

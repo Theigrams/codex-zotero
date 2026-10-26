@@ -513,9 +513,7 @@ async function commentSelection() {
         if (popup.key === pendingKey) popup.key = key;
       },
     });
-    popup.pendingCreate = false;
-    popup.saveComment();
-    popup.render();
+    popup.finishCreate();
   } catch (e) {
     popup.pendingCreate = false;
     if (popup.key === pendingKey) popup.close();
