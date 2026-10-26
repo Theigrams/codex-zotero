@@ -5,6 +5,7 @@
   "description": "Read Zotero papers inside the Codex app: PDFKit rendering, Zotero annotations, guided reading.",
   "scripts": {
     "build": "node build.mjs",
+    "package": "node package-plugin.mjs",
     "test": "node --test test/*.test.mjs",
     "preflight": "node test/preflight.mjs",
     "install-plugin": "node install.mjs",
