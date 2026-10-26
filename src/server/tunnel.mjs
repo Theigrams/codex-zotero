@@ -11,6 +11,10 @@ const exec = promisify(execFile);
 const exists = path => access(path).then(()=>true,()=>false);
 const ID = /^tunnel_(?:[a-z0-9]{4}_)?[a-z0-9]{32}$/;
 const quote = value => `'${value.replaceAll("'", "'\\''")}'`;
+export function hasRecentPoll(metrics, now = Date.now()) {
+  const values=[...metrics.matchAll(/^commands_poll_last_successful_timestamp_seconds(?:\{[^}\n]*\})?\s+([^\s]+)/gm)].map(m=>Number(m[1]));
+  return values.some(seconds=>Number.isFinite(seconds)&&seconds>0&&now/1000-seconds>=-10&&now/1000-seconds<=90);
+}
 export function tunnelError(error) {
   const text=String(error?.stderr || error?.message || '');
   if (/401|unauthorized|invalid.api.key/i.test(text)) return '运行密钥无效或已过期，请更换 OpenAI 运行密钥。';
@@ -35,6 +39,19 @@ export class TunnelManager {
     env.TUNNEL_CLIENT_STATE_DIR=join(this.directory,'runtime');
     return this.run(this.binary,args,{timeout,maxBuffer:256*1024,env});
   }
+  async recentPoll(data) {
+    // Direct connections may have no proxy-health entry. Verify actual successful polls instead.
+    try {
+      const url=new URL('/metrics',data.ui_url || data.health_url);
+      if(url.protocol!=='http:'||!['127.0.0.1','localhost','[::1]'].includes(url.hostname)||url.username||url.password)return false;
+      const response=await this.fetcher(url,{signal:AbortSignal.timeout(3000),redirect:'error'});
+      if(!response.ok)return false;
+      const reader=response.body.getReader();let bytes=0;const chunks=[];
+      try {for(;;){const {done,value}=await reader.read();if(done)break;bytes+=value.length;if(bytes>512*1024)return false;chunks.push(value);}}
+      finally {await reader.cancel().catch(()=>{});}
+      return hasRecentPoll(Buffer.concat(chunks).toString());
+    } catch {return false;}
+  }
   async status(force=false) {
     const cfg=await this.config(), installed=await exists(this.binary), keyConfigured=await exists(this.keyFile);
     const base={...cfg,installed,keyConfigured,bridgeEnabled:!!this.getBridge(),busy:this.busy,error:this.lastError,chatVerified:false};
@@ -49,7 +66,7 @@ export class TunnelManager {
         const {stdout}=await this.cli(['runtimes','status',this.alias,'--json'],10000);const data=JSON.parse(stdout);
         if(typeof data.process_running!=='boolean')throw new Error('Unsupported runtime status');
         const running=data.process_running===true, poll=data.control_plane_poll_health?.state;
-        const routeReady=poll==='healthy'||poll==='direct', routeFailed=poll==='failed';
+        const routeReady=poll==='healthy'||poll==='direct'||((!poll||poll==='unknown')&&data.healthy===true&&data.ready===true&&await this.recentPoll(data)), routeFailed=poll==='failed';
         const ready=running&&data.healthy===true&&data.ready===true&&routeReady;
         value={state:ready?'ready':routeFailed?'error':running?'starting':'stopped',processRunning:running,healthy:data.healthy===true,ready,
           error: data.error || data.remote_error ? tunnelError({message:data.error||data.remote_error}) : routeFailed?'本地进程已启动，但无法联系 OpenAI 隧道。请检查网络与账号权限。':this.lastError};

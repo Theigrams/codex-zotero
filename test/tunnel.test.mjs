@@ -5,7 +5,7 @@ import { join } from 'node:path';
 import { tmpdir } from 'node:os';
 import { createHash } from 'node:crypto';
 import { zipSync } from 'fflate';
-import { TunnelManager } from '../src/server/tunnel.mjs';
+import { TunnelManager, hasRecentPoll } from '../src/server/tunnel.mjs';
 
 async function fixture() {
  const root=await mkdtemp(join(tmpdir(),'zotero-tunnel-'));let running=false,bridge=false,ready=false;const calls=[];
@@ -82,5 +82,20 @@ test('first configuration accepts the real client not-known alias response',asyn
   const state=await f.manager.configure({tunnelId:'tunnel_aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa',apiKey:'private-key'});
   assert.equal(state.keyConfigured,true);assert.equal(state.state,'stopped');assert.equal(state.error,'');
   assert.equal((await f.manager.stop({clear:true})).keyConfigured,false);
+ } finally {await f.close();}
+});
+
+test('unknown direct-route health requires a recent successful poll, not merely a live process',async()=>{
+ const now=Date.now();
+ assert.equal(hasRecentPoll(`commands_poll_last_successful_timestamp_seconds{x="y"} ${now/1000-10}`,now),true);
+ for(const value of [0,now/1000-100,now/1000+100,NaN])assert.equal(hasRecentPoll(`commands_poll_last_successful_timestamp_seconds ${value}`,now),false);
+ const f=await fixture();try {
+  await f.manager.configure({tunnelId:'tunnel_aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa',apiKey:'private-key'});
+  f.manager.run=async()=>({stdout:JSON.stringify({process_running:true,healthy:true,ready:true,control_plane_poll_health:{state:'unknown'},ui_url:'http://127.0.0.1:54321/ui'})});
+  f.manager.fetcher=async url=>{assert.equal(String(url),'http://127.0.0.1:54321/metrics');return new Response(`commands_poll_last_successful_timestamp_seconds ${Date.now()/1000}`);};
+  assert.equal((await f.manager.status(true)).ready,true);
+  f.manager.fetcher=async()=>new Response('commands_poll_last_successful_timestamp_seconds 0');
+  assert.equal((await f.manager.status(true)).ready,false);
+  assert.equal(await f.manager.recentPoll({ui_url:'https://example.com/ui'}),false);
  } finally {await f.close();}
 });
