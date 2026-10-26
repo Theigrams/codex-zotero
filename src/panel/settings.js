@@ -4,15 +4,17 @@ import { DEFAULT_PALETTE, ZOTERO_COLORS } from '../shared/annotations.mjs';
 import { ACTIONS, DEFAULT_KEYS, comboOf, keymap, reserved, showCombo } from '../shared/keys.mjs';
 import { MAP_PROMPT } from '../server/map-prompt.mjs';
 import { DEFAULT_QUESTIONS, parseTemplate } from '../server/reading-questions.mjs';
+import { TunnelSettings } from './tunnel-settings.js';
 
 const $ = id => document.getElementById(id);
 const MAX_COLORS = 9;
 
 export class Settings {
   // getPrefs(): the current preferences; onChange(prefs): after a save.
-  constructor({ call, getPrefs, onChange }) {
+  constructor({ call, getPrefs, onChange, openUrl = url => window.open(url, '_blank', 'noopener') }) {
     Object.assign(this, { call, getPrefs, onChange });
     this.el = $('settings');
+    this.tunnel = new TunnelSettings({call,openUrl});
     $('mineruForm').addEventListener('submit', e => { e.preventDefault(); this.saveMineru(); });
     $('allowModelOcr').addEventListener('change', () => this.save({ allowModelOcr: $('allowModelOcr').checked }, 'ocrSettingsNote'));
     this.capturing = null; // action id waiting for a new combo
@@ -62,6 +64,7 @@ export class Settings {
   open() {
     this.render();
     this.el.hidden = false;
+    this.tunnel.open();
     const request = this.loadRequest = (this.loadRequest || 0) + 1;
     this.call('prefs_get').then(({ prefs }) => {
       if (request !== this.loadRequest) return;
@@ -73,6 +76,7 @@ export class Settings {
     this.capturing = null;
     this.loadRequest = (this.loadRequest || 0) + 1;
     $('mineruKey').value = '';
+    this.tunnel.close();
     $('swatches').hidden = true;
     this.el.hidden = true;
   }

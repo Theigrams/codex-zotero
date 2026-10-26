@@ -17,42 +17,50 @@ PDF 与缓存继续存放在本机。模型请求读取时，正文/评论会通
 
 桥接默认关闭。它只监听当前用户权限的 Unix socket，不创建 TCP/HTTP 公网监听，不需要为本机设置入站端口。每个阅读器服务使用独立 readerSession；模型必须携带上下文中的 readerSession，涉及文档的操作还必须提供 docId。服务重启后旧 readerSession 明确失效，不能默默跳到另一篇论文。
 
-## 安装与启用
+## 分享给其他用户
 
-```sh
-npm run install-plugin
-npm run chat-bridge -- enable
-```
+本地插件可以通过仓库/安装包分享，每位用户在自己的机器、自己的 Zotero 和自己的 OpenAI 账号上配置。安装包不包含开发者的隧道 ID、运行密钥、MinerU key、文库路径或已生成的运行配置。
 
-由用户完全退出并重新打开桌面应用，再打开阅读器。阅读器后台上下文会携带 readerSession。关闭桥接使用 `npm run chat-bridge -- disable`，重启应用生效；只需检查开关则运行 `npm run chat-bridge -- status`。
+两种分发方式需要区分：
 
-启用只建立本机通信能力，不会自动创建隧道或更改 ChatGPT 插件。默认本地插件不受影响。
+| 方式 | 用户需要做什么 | 当前范围 |
+| --- | --- | --- |
+| 本地阅读器 + 私有 Chat 连接 | 在自己的 Platform 创建/取得隧道权限，通过设置页连接 | 已实现设置与本机管理；真实账号连接仍需验收 |
+| 所有人安装后直接登录的公共 Chat 插件 | 统一公网 MCP 服务、OAuth 登录、本机配对和严格用户隔离 | 未提供托管服务，不能用开发者个人隧道代替 |
 
-## 配置官方隧道
+私有隧道的创建需要 Tunnels Read + Manage，运行/使用需要 Tunnels Read + Use，并关联目标 ChatGPT 账号/工作区。没有这些权限的用户仍可使用本地阅读器，但不能据此保证其 Chat 能连接。账号授权与 Chat 中添加插件由 OpenAI 页面完成，设置页只提供入口，不自动代替用户授予权限。
 
-按照 [OpenAI Secure MCP Tunnel](https://developers.openai.com/api/docs/guides/secure-mcp-tunnels) 和 [tunnel-client onboarding](https://github.com/openai/tunnel-client/blob/master/docs/onboarding.md) 配置：
+## 普通用户设置流程
 
-1. 登录目标账号的 [Platform 隧道设置](https://platform.openai.com/settings/organization/tunnels)，创建或复用一个私有隧道，关联需要使用的 ChatGPT 账号/工作区。创建需要 Tunnels Read + Manage；运行和使用需要 Tunnels Read + Use。
-2. 安装 [官方最新版 tunnel-client](https://github.com/openai/tunnel-client/releases/latest)。先运行 `tunnel-client help quickstart`，以实际安装版本的帮助为准。
-3. 为隧道准备专用运行密钥，按官方方式通过 `CONTROL_PLANE_API_KEY` 环境变量提供。不要把密钥写进仓库、MCP 参数、聊天、截图或示例配置。
-4. 使用 stdio profile，MCP 命令为构建生成的 `dist/chat-bridge.mjs`，**不是**常规 `dist/server.mjs`，也不是测试用 `--standalone` HTTP 服务。
+插件安装后，在阅读器设置或原生插件设置的「设置与连接」中打开 **Chat 私有连接 → 配置远程读取**。
 
-macOS 默认安装路径示例（替换实际用户路径与 tunnel id；命令中没有真实密钥）：
+1. 点击「打开隧道设置」和「创建运行密钥」，在自己的 Platform 账号取得隧道 ID 与运行密钥。
+2. 填写隧道 ID、OpenAI 运行密钥，点击「保存配置」。密钥不是 MinerU key；以密码框填写，保存/关闭后清空，不回显已保存内容。
+3. 点击「安装连接组件」。插件按本机架构下载官方 `tunnel-client` 最新正式版本，校验官方 SHA-256 后安装。这里只支持现有阅读器覆盖的 macOS Apple 芯片/Intel。
+4. 点击「连接」。插件生成本机启动参数并使用官方受管运行方式启动，不需要自己写命令、路径或常驻脚本。
+5. 点击「复制隧道 ID」和「打开 Chat 连接设置」，按下一节将同一个隧道加入 Chat，再实际读取一次正文验收。
 
-```sh
-tunnel-client init \
-  --sample sample_mcp_stdio_local \
-  --profile zotero-chat \
-  --tunnel-id '<your-tunnel-id>' \
-  --mcp-command '"/Applications/ChatGPT.app/Contents/Resources/cua_node/bin/node" "/Users/your-name/.codex/plugins/cache/codex-zotero-local/codex-zotero/0.1.0/dist/chat-bridge.mjs"'
+「随阅读器自动连接」默认关闭，保存开启后会在后续阅读器服务启动时尝试恢复；一次连接失败不会进行无限重试。手动「断开」会同时关闭自动连接。关闭设置页不停止已经连接的后台进程。
 
-tunnel-client doctor --profile zotero-chat --explain
-tunnel-client run --profile zotero-chat
-```
+「断开并清除本机凭据」先停止本插件管理的进程，确认停止后删除本机连接信息和运行密钥；不删除 OpenAI 上的隧道，也不影响其他软件的隧道。卸载脚本也先停止本插件的连接；普通卸载保留用户设置，`--all` 才清除全部阅读器状态。
 
-前台验证完成后，若要长期后台运行，使用当前 `tunnel-client runtimes connect --help` 提供的受管运行方式，再以 `runtimes status` 确认运行和就绪状态；不使用 nohup/disown。启动失败不得描述为已连接。
+## 状态与隐私
 
-使用自定义 `CODEX_ZOTERO_STATE` 的安装，桥接进程需要使用同一个目录。保持 tunnel-client 与桌面应用的阅读器服务运行；退出应用、停用插件或服务重启后旧连接失效。仅关闭面板不保证后台 MCP 服务退出；reader_connections 中的 live 表示面板近期是否仍在报告状态。无论面板是否可见，正文读取均要求明确的 docId，不会自动切换论文。
+界面分别显示「待配置」「未安装连接组件」「正在连接」「隧道已就绪」「连接异常」。只有官方进程报告运行、健康且 ready，才显示「隧道已就绪」；这仍不代表 Chat 已获得工具或读过正文，后者必须在目标 Chat 实测。
+
+隧道运行配置位于用户自己的状态目录 `chat-connection/`。运行密钥文件权限为 0600；工具返回值只包含是否已配置，不包含密钥。启动参数和运行配置引用密钥文件，不插入明文。状态输出仅取所需布尔值，错误转换为不含敏感原文的提示。凭据/安装/启动工具仅供 App 调用，不向模型或远程 MCP 开放。
+
+运行别名和配置目录与本用户的阅读器状态绑定，停止操作只针对该别名。MCP 命令使用当前安装位置和 Node 路径生成；不硬编码开发者用户名或要求用户手改目录。已有其他隧道不受影响。
+
+连接时立即启用本机桥接、断开时关闭；阅读器后台上下文通过轮询同步新的 readerSession，无需为了修改隧道 ID 再重启应用。只有升级插件的服务端代码仍需要正常重启宿主。
+
+## 高级与排错
+
+常见错误提示分别引导用户检查 ID、运行密钥过期、Tunnels Read + Use/工作区关联以及网络。刷新状态不会启动连接或 OCR；安装组件也不会自动连接。
+
+保留 `npm run chat-bridge -- enable|disable|status` 供开发测试，但普通用户无需使用。自定义组件路径可在本地启动环境指定 `CODEX_ZOTERO_TUNNEL_BINARY`，它不是模型可修改的设置。
+
+参考 [OpenAI Secure MCP Tunnel](https://developers.openai.com/api/docs/guides/secure-mcp-tunnels) 和 [官方客户端说明](https://github.com/openai/tunnel-client/blob/master/docs/onboarding.md)。私有隧道连接未就绪时，不应改成匿名公网 HTTP 服务，也不能用重新 OCR 解决工具不可达。
 
 ## 在 Chat 中连接
 
@@ -77,11 +85,14 @@ tunnel-client run --profile zotero-chat
 
 ## 验证
 
-`npm test` 覆盖工具白名单、严格参数、连接隔离、Unix socket 权限、关闭后清理，以及 MCP 正文返回。
+`npm test` 覆盖工具白名单、严格参数、连接隔离、Unix socket 权限、关闭后清理、MCP 正文返回，以及设置隐私、进程状态、安装校验与凭据清理。
 
 ```sh
 npm run build
 node test/chat-bridge-preflight.mjs --pdf /absolute/path/to/test.pdf
+node test/tunnel-settings-preflight.mjs --pdf /absolute/path/to/test.pdf
 ```
 
 预检使用独立 Zotero API、缓存和状态目录，启动真正的阅读器与独立桥接进程，验证当前文档、全文分页与版本、完整评论、缓存 OCR 复用、错误连接/缺失 docId 拒绝、无 Zotero 写入。不创建真实隧道、不上传真实论文，也不自动发送真实 Chat 消息。
+
+设置预检使用替身 tunnel-client 验证用户点击流程、动态启停、密码清空、窄屏与上下文隔离；不把模拟的 ready 状态视为真实 OpenAI 连接成功。

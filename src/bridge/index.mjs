@@ -22,5 +22,6 @@ export function createBridgeServer({ root = process.env.CODEX_ZOTERO_STATE || jo
   return server;
 }
 if(import.meta.url===`file://${process.argv[1]}`) {
-  const server=createBridgeServer();await server.connect(new StdioServerTransport());
+  const index=process.argv.indexOf('--state-root');
+  const server=createBridgeServer(index>=0?{root:process.argv[index+1]}:{});await server.connect(new StdioServerTransport());
 }

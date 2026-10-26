@@ -22,7 +22,7 @@ export function registerExtensions(server, { state, searchLibrary, prefsChanged,
     },
     layout: [{ kind: 'group', title: '阅读与识别', items: [
       { kind: 'property', property: 'layoutEnabled' }, { kind: 'property', property: 'allowModelOcr' },
-      { kind: 'property', property: 'renderMode' }, { kind: 'tool', tool: 'reader_settings', description: '填写 MinerU key，调整批注、快捷键与精读设置。' },
+      { kind: 'property', property: 'renderMode' }, { kind: 'tool', tool: 'reader_settings', description: '填写 MinerU key、配置 Chat 私有连接，调整批注、快捷键与精读设置。' },
     ] }],
     read: values,
     update: async patch => { await state.setPrefs(patch); prefsChanged(); return values(); },

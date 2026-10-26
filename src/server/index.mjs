@@ -34,6 +34,8 @@ import { Research, researchTools, researchKeys } from './research.mjs';
 import { startLocalBridge } from '../bridge/local.mjs';
 import { bridgeDefinitions } from '../bridge/tools.mjs';
 import { jsonFile } from './files.mjs';
+import { atomicJSON } from './files.mjs';
+import { TunnelManager } from './tunnel.mjs';
 
 const here = dirname(fileURLToPath(import.meta.url));
 const argv = process.argv.slice(2);
@@ -196,15 +198,23 @@ const ctx = {
 const forModel = modelTools(ctx);
 const forResearch = researchTools(research);
 let chatBridge = null;
-if (argv.includes('--chat-bridge') || (await jsonFile(join(stateRoot, 'chat-bridge-enabled.json'), {})).enabled === true) {
-  chatBridge = await startLocalBridge({ root:stateRoot, definitions:bridgeDefinitions({...forModel,...forResearch}),
+async function setChatBridge(enabled) {
+  if(enabled && !chatBridge) chatBridge = await startLocalBridge({ root:stateRoot, definitions:bridgeDefinitions({...forModel,...forResearch}),
     describe:async()=>{
       const record=live?.docId ? await state.document(live.docId) : null;
       return { document:record ? {docId:live.docId,title:record.title,itemKey:record.itemKey} : null,
         live:Date.now()-lastPoll<15000 };
     },
   });
+  if(!enabled && chatBridge) {const old=chatBridge;chatBridge=null;await old.close();}
+  await atomicJSON(join(stateRoot,'chat-bridge-enabled.json'),{enabled});
 }
+if (argv.includes('--chat-bridge') || (await jsonFile(join(stateRoot, 'chat-bridge-enabled.json'), {})).enabled === true) {
+  await setChatBridge(true);
+}
+const tunnel = new TunnelManager({root:stateRoot,bridgeFile:join(here,'chat-bridge.mjs'),setBridge:setChatBridge,getBridge:()=>chatBridge,
+  binary:process.env.CODEX_ZOTERO_TUNNEL_BINARY || undefined});
+if(!argv.includes('--standalone'))setTimeout(()=>tunnel.resume().catch(()=>{}),1000).unref();
 
 const CAPTION_KIND = { fig: '图', tab: '表', alg: '算法' };
 async function outlineX(doc, page, y, kind) {
@@ -216,6 +226,11 @@ async function outlineX(doc, page, y, kind) {
 }
 
 const appTools = {
+  async tunnel_status() {return tunnel.status();},
+  async tunnel_configure(args) {return tunnel.configure(args);},
+  async tunnel_install() {return tunnel.install();},
+  async tunnel_start() {return tunnel.start();},
+  async tunnel_stop(args) {return tunnel.stop(args);},
   async research_choose({ query = '' }) { return { requiresSelection: true, papers: await research.candidates(query) }; },
   async research_candidates({ query = '' }) { return { papers: await research.candidates(query) }; },
   async research_prepare({ itemKeys }) { return research.status(itemKeys); },
@@ -252,7 +267,7 @@ const appTools = {
   async panel_poll({ instance, seen = 0 }) {
     const superseded = activeInstance !== null && instance !== activeInstance;
     if (!superseded) lastPoll = Date.now();
-    return { superseded, prefsRevision, nav: !superseded && nav.seq > seen ? nav : null };
+    return { superseded, prefsRevision, readerSession:chatBridge?.id || null, nav: !superseded && nav.seq > seen ? nav : null };
   },
   async tab_open({ docId, itemKey }) {
     if (docId?.startsWith('note:')) {
@@ -386,6 +401,9 @@ const selectionSchema = z.object({
   rects: z.array(rect).max(200).optional(), rect: rect.optional(), a: z.number().int().optional(),
 });
 const appSchemas = {
+  tunnel_status: {}, tunnel_install: {}, tunnel_start: {},
+  tunnel_configure: {tunnelId:z.string().max(120),apiKey:z.string().max(4096).optional(),autoConnect:z.boolean().optional()},
+  tunnel_stop: {clear:z.boolean().optional()},
   research_choose: { query: z.string().max(200).default('') },
   research_candidates: { query: z.string().max(200).default('') },
   research_prepare: { itemKeys: researchKeys },
@@ -563,7 +581,7 @@ if (argv.includes('--standalone')) {
     _meta: { ui: { prefersBorder: false }, 'openai/ui': { availableDisplayModes: ['inline', 'fullscreen'], preferredDisplayMode: 'inline' } },
   }] }));
   registerAppTool(server, 'reader_settings', {
-    title: '设置与 MinerU 密钥', description: 'Open private reader settings. Credentials are entered only in the app.', inputSchema: {},
+    title: '设置与连接', description: 'Open private reader settings for MinerU credentials and optional private Chat tunnel setup. Credentials are entered only in the app.', inputSchema: {},
     annotations: { readOnlyHint: true }, _meta: { ui: { resourceUri: SETTINGS_URI, visibility: ['app'] } },
   }, async () => ok({ view: 'settings' }));
   registerAppTool(server, 'reader_library', {

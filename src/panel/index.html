@@ -246,6 +246,13 @@
   #settings .note { margin: 4px 0 0; color: #c0392b; font-size: 12px; }
   #settings .note.success { color:var(--muted); }
   #settings .note:empty { display: none; }
+  #settings .tunnel-actions { flex-wrap:wrap; }
+  #settings button:disabled { opacity:.45; cursor:default; }
+  #settings .tunnel-field { display:block; margin:8px 0; font-size:12px; }
+  #settings .tunnel-field input { display:block; width:100%; box-sizing:border-box; margin-top:4px; padding:6px 8px; border:1px solid var(--line); border-radius:4px; background:var(--bg); color:var(--text); font:inherit; }
+  #tunnelState { font-size:12px; font-weight:600; }
+  #tunnelState.connected { color:var(--accent); }
+  #chatConnection summary { cursor:pointer; font-size:12px; font-weight:600; padding:8px 0; }
   #settings .row { display: flex; align-items: center; gap: 8px; margin-top: 4px; }
   #settings .spacer { flex: 1; }
   #settings .link { color: var(--accent); }
@@ -429,6 +436,28 @@
   <label class="radio"><input id="allowModelOcr" type="checkbox"><span>允许模型按需识别</span>
     <small>对所有论文生效。配置密钥后默认开启；模型按问题需要识别整篇，已有结果直接复用。</small></label>
   <p id="ocrSettingsNote" class="note" role="status"></p>
+  <h3>Chat 私有连接</h3>
+  <details id="chatConnection">
+    <summary>配置远程读取（可选）</summary>
+    <p class="hint">需要 OpenAI Platform 的隧道权限。普通阅读无需设置；此私有连接不等于可直接公开发布的云端插件。</p>
+    <div class="row"><span id="tunnelState" role="status" aria-live="polite">正在检查…</span><span class="spacer"></span><button id="tunnelRefresh" class="link" type="button">刷新</button></div>
+    <p id="tunnelDetail" class="hint"></p>
+    <p class="hint">1. 在自己的 OpenAI 账号创建隧道和运行密钥。</p>
+    <div class="row tunnel-actions"><button id="tunnelPlatform" class="link" type="button">打开隧道设置 ↗</button><button id="tunnelKeys" class="link" type="button">创建运行密钥 ↗</button></div>
+    <form id="tunnelForm" autocomplete="off">
+      <label class="tunnel-field" for="tunnelId">隧道 ID<input id="tunnelId" type="text" maxlength="120" placeholder="tunnel_…" spellcheck="false" autocapitalize="off"></label>
+      <label class="tunnel-field" for="tunnelKey">OpenAI 运行密钥<input id="tunnelKey" type="password" maxlength="4096" autocomplete="new-password" spellcheck="false" autocapitalize="off"></label>
+      <p class="hint">不是 MinerU 密钥。仅保存在本机，不回显，也不加入论文上下文。</p>
+      <label class="radio"><input id="tunnelAuto" type="checkbox"><span>随阅读器自动连接</span><small>默认关闭。开启后，阅读器启动时恢复已保存的连接。</small></label>
+      <div class="row"><span class="spacer"></span><button id="tunnelSave" class="link" type="submit">保存配置</button></div>
+    </form>
+    <p class="hint">2. 安装官方连接组件，再启动本机连接。</p>
+    <div class="row tunnel-actions"><button id="tunnelInstall" class="link" type="button">安装连接组件</button><button id="tunnelConnect" class="link" type="button">连接</button><button id="tunnelDisconnect" class="link" type="button">断开</button></div>
+    <p class="hint">3. 在 Chat 添加私有 MCP 连接，选择同一隧道。接通后先验证一次正文读取。</p>
+    <div class="row tunnel-actions"><button id="tunnelCopy" class="link" type="button">复制隧道 ID</button><button id="tunnelChat" class="link" type="button">打开 Chat 连接设置 ↗</button></div>
+    <p id="tunnelNote" class="note" role="status"></p>
+    <div class="row"><button id="tunnelClear" class="link" type="button">断开并清除本机凭据</button></div>
+  </details>
   <h3>渲染方式</h3>
   <label class="radio"><input type="radio" name="renderMode" value="aligned"><span>像素对齐 + 近灰加深</span>
     <small>最锐利，字更有分量。默认。</small></label>

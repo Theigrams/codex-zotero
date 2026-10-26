@@ -648,6 +648,9 @@ function toggleDrawer() {
 async function poll() {
   try {
     const r = await host.call('panel_poll', { instance, seen: navSeen });
+    if ('readerSession' in r && conversation.readerSession !== r.readerSession) {
+      conversation.readerSession = r.readerSession; conversation.schedule();
+    }
     if (r.prefsRevision !== undefined && r.prefsRevision !== prefsSeen) {
       prefsSeen = r.prefsRevision;
       applyPrefs((await host.call('prefs_get')).prefs);
@@ -736,7 +739,7 @@ async function main() {
     listNotes: async () => (doc ? host.call('notes_list', { docId: doc.id }) : { notes: [], map: null }),
     generateMap: () => host.call('map_generate', { docId: doc.id }), palette,
   });
-  settings = new Settings({ call: host.call, getPrefs: () => prefs, onChange: applyPrefs });
+  settings = new Settings({ call: host.call, getPrefs: () => prefs, onChange: applyPrefs, openUrl });
   home = new Home({ call: host.call, onOpen: openTab, onLeave: leaveHome });
   selection = new Selection({
     reader, call: host.call, onChange: onSelection,
