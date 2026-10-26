@@ -261,7 +261,19 @@ export class Reader {
     if (!this.doc) return;
     const [first, last] = this.range(this.scroller.clientHeight);
     for (let k = first; k <= last; k++) this.ensurePage(k);
-    for (const k of [...this.pages.keys()]) if (k < first - (this.remote?1:6) || k > last + (this.remote?1:6)) this.dropPage(k);
+    for (const k of [...this.pages.keys()]) if (k < first - (this.remote?12:6) || k > last + (this.remote?12:6)) this.dropPage(k);
+    if (this.remote) {
+      // Bound decoded surfaces separately from the compressed host cache. Keep the
+      // nearest pages resident; the visible spread is never evicted.
+      const distant = [...this.pages.keys()].sort((a,b) => Math.abs(b-first)-Math.abs(a-first));
+      const cost = k => [...this.pages.get(k).strips.values()].reduce((n,s)=>n+(s.img.naturalWidth*s.img.naturalHeight*4),0);
+      let bytes = distant.reduce((n,k)=>n+cost(k),0);
+      for (const k of distant) {
+        if (bytes <= 192*1024*1024) break;
+        if (k >= first && k <= last) continue;
+        bytes -= cost(k); this.dropPage(k);
+      }
+    }
   }
 
   // Works out which strips should exist now, queues the missing ones (visible first),
@@ -270,8 +282,8 @@ export class Reader {
     if (!this.doc) return;
     const view = this.scroller.clientHeight;
     const top = this.scroller.scrollTop, bottom = top + view;
-    const lo = this.remote ? top : top - view * 0.75 + Math.min(0, ahead) * view;
-    const hi = this.remote ? bottom : bottom + view * 0.75 + Math.max(0, ahead) * view;
+    const lo = this.remote ? top - view : top - view * 0.75 + Math.min(0, ahead) * view;
+    const hi = this.remote ? bottom + view : bottom + view * 0.75 + Math.max(0, ahead) * view;
     const [first, last] = this.range(Math.max(top - lo, hi - bottom));
     const wanted = new Map();
     const visible = [];
@@ -296,7 +308,7 @@ export class Reader {
       else if (this.queue.has(key)) Object.assign(this.queue.get(key), { priority: job.priority, distance: job.distance });
     }
     for (const [k, pg] of this.pages) {
-      if (k >= first - 1 && k <= last + 1) continue;
+      if (this.remote || (k >= first - 1 && k <= last + 1)) continue;
       for (const s of pg.strips.values()) release(s.img);
       pg.strips.clear();
     }

@@ -84,19 +84,17 @@ export class ContextBlocks {
     if (this.items.length >= MAX_CONTEXT_BLOCKS) return this.onNote(`最多保留 ${MAX_CONTEXT_BLOCKS} 块，请先移除一些`);
     const item = { id, docId: doc.id, title: doc.title, itemKey: doc.itemKey, page: s.page, rect,
       type: s.block?.type || (s.kind === 'text' ? 'text' : 'region'), text: (s.text || '').slice(0, 6000), source: s.block?.textSource || 'original' };
-    const generation = this.generation;
-    this.adding = true;
-    try {
-      const crop = await this.host.call('selection_image', { docId: doc.id, page: s.page, rect, scale: 0.6 });
-      if (generation !== this.generation) return;
-      if (crop.data.length <= 1024*1024) item.image = crop.data;
-      item.contextNumber = this.nextNumber++;
-      item.contextColor = this.pickColor();
-      this.items.push(item); this.changed(); this.onNote('已加入上下文');
-      return true;
-    } catch (e) { this.onNote(`加入失败：${e.message}`); }
-    finally { this.adding = false; }
+    item.contextNumber = this.nextNumber++;
+    item.contextColor = this.pickColor();
+    this.items.push(item); this.changed(); this.onNote('已加入上下文');
+    // A thumbnail must never block pinning text or returning to the composer.
+    this.host.call('selection_image', { docId: doc.id, page: s.page, rect, scale: 0.6 }).then(crop => {
+      if (!this.items.includes(item) || !crop?.data || crop.data.length > 1024*1024) return;
+      item.image = crop.data; this.changed();
+    }).catch(() => {});
+    return true;
   }
+
   selectedId() {
     const sel = this.selection.current, rect = sel && this.selection.bounds();
     return rect ? this.items.find(b => b.docId === this.reader.doc?.id && b.page === sel.page

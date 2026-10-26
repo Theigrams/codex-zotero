@@ -5,7 +5,7 @@ const sleep=ms=>new Promise(resolve=>setTimeout(resolve,ms));
 const initializationError=error=>/not initialized|initialization_required|send initialize/i.test(String(error?.message || error));
 const transient=error=>initializationError(error)||/timeout|timed out|\b429\b|\b50[234]\b|temporar|connection (?:closed|reset)/i.test(String(error?.message||error));
 function readable(error){return initializationError(error)?new Error('阅读器连接尚未就绪。请稍后重试；若持续出现，请刷新 Chat 的插件连接。'):error;}
-export function remoteCalls(send,{wait=sleep,attempts=3,imageBudget=8*1024*1024}={}) {
+export function remoteCalls(send,{wait=sleep,attempts=3,imageBudget=48*1024*1024}={}) {
   const queue=[],pending=new Map(),cache=new Map(),images=new Map();let active=0,imageBytes=0;
   const pump=()=>{
     while(active<2 && queue.length){
@@ -25,7 +25,7 @@ export function remoteCalls(send,{wait=sleep,attempts=3,imageBudget=8*1024*1024}
     if(name==='render_page'&&images.has(key)){const entry=images.get(key);images.delete(key);images.set(key,entry);return Promise.resolve(entry.result);}
     if(CACHE_READS.has(name)&&cache.has(key))return Promise.resolve(cache.get(key));
     if(read&&pending.has(key))return pending.get(key);
-    const priority=/^(?:annotation_|ocr_job_(?:start|cancel))/.test(name)?0:name==='render_page'?1:name==='panel_poll'?3:2;
+    const priority=/^(?:annotation_|ocr_job_(?:start|cancel))/.test(name)?0:name==='render_page'?(args.priority?4:1):name==='panel_poll'?3:2;
     const promise=new Promise((resolve,reject)=>queue.push({name,args,resolve,reject,priority}));
     if(read)pending.set(key,promise);
     promise.then(result=>{

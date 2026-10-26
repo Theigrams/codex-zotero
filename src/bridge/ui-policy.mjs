@@ -14,4 +14,4 @@ export function validateRemoteAppCall(name,args) {
   if(!REMOTE_UI_TOOLS.includes(name))throw new Error('此操作仅允许在本机设置中执行。');
   return z.object(appSchemas[name]).strict().parse(args);
 }
-export const REMOTE_READER_URI='ui://codex-zotero/remote-reader-v2.html';
+export const REMOTE_READER_URI='ui://codex-zotero/remote-reader-v3.html';

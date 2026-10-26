@@ -43,6 +43,7 @@ try {
     if(args.name==='render_page' && (manualBlocked || process.env.TEST_REMOTE_FAIL_ONCE==='1'&&!injected)){
       injected=true;res.setHeader('Content-Type','application/json');return res.end(JSON.stringify({isError:true,content:[{type:'text',text:'MCP server is not initialized; send initialize and notifications/initialized before operational requests'}]}));
     }
+    if (['selection_image','annotation_create'].includes(args.name)) await new Promise(r=>setTimeout(r,1800));
     res.setHeader('Content-Type','application/json');return res.end(JSON.stringify(await client.callTool(args)));
    }
    res.writeHead(404);res.end();
@@ -71,15 +72,26 @@ try {
  assert.equal(await frame.$eval('#localConnectionSettings',e=>getComputedStyle(e).display),'none');
  await frame.evaluate(()=>window.__selection.set({kind:'text',page:1,text:'Selected evidence',rects:[[30,70,220,18]],a:0}));
  await frame.click('#addContext');
+ await frame.waitForFunction(()=>!document.getElementById('contextTray').hidden,{timeout:700});
  await page.waitForFunction(()=>window.__modelContexts.some(c=>c.structuredContent?.contextBlocks?.length===1));
+ await frame.click('#ask');
+ await page.waitForFunction(()=>window.__displayRequests.at(-1)==='inline');
  assert.equal(await page.evaluate(()=>window.__messages.length),0,'selection must not send a chat message');
  await frame.evaluate(()=>window.__selection.set({kind:'text',page:1,text:'Highlighted evidence',rects:[[30,110,220,18]],a:4}));
  await frame.click('#highlight');
  await frame.waitForFunction(()=>window.__annotations.items.some(a=>a.text==='Highlighted evidence'));
  await frame.evaluate(()=>window.__selection.set({kind:'text',page:1,text:'Commented evidence',rects:[[30,145,220,18]],a:8}));
- await frame.click('#comment');await frame.waitForSelector('#annComment',{visible:true});
+ await frame.click('#comment');await frame.waitForSelector('#annComment',{visible:true,timeout:700});
  await frame.type('#annComment','Web annotation comment');await frame.$eval('#annComment',e=>e.blur());
  await frame.waitForFunction(()=>window.__annotations.items.some(a=>a.comment==='Web annotation comment'));
+ const pageOneCalls=calls.filter(c=>c.name==='render_page'&&c.arguments.page===1).length;
+ if(doc.pageCount>=3){
+  await frame.evaluate(()=>window.__reader.scrollToPage(3));
+  await frame.waitForFunction(()=>[...window.__reader.pages.get(3)?.strips.values()||[]].some(s=>s.ready));
+  await frame.evaluate(()=>window.__reader.scrollToPage(1));
+  await frame.waitForFunction(()=>[...window.__reader.pages.get(1)?.strips.values()||[]].some(s=>s.ready));
+  assert.equal(calls.filter(c=>c.name==='render_page'&&c.arguments.page===1).length,pageOneCalls,'back-scroll reuses loaded page without MCP');
+ }
  const deadline=Date.now()+10000;
  while(!zotero.annotations().some(a=>a.data.annotationComment==='Web annotation comment')&&Date.now()<deadline)await new Promise(r=>setTimeout(r,100));
  assert.ok(zotero.annotations().some(a=>a.data.annotationComment==='Web annotation comment'),'comment persisted to Zotero API');

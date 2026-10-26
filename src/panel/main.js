@@ -493,12 +493,35 @@ function highlightSelection(color = palette()[0].color, type = 'highlight') {
 }
 
 // The toolbar's 评论: highlight and start typing the comment, in one step.
-function commentSelection() {
-  highlightSelection().then(key => {
-    if (!key) return;
-    popup.open(key);
-    popup.edit();
-  });
+async function commentSelection() {
+  const sel = selection?.current;
+  if (!sel || commentSelection.pending) return;
+  if (!annotations.available) return note('这篇 PDF 不是从 Zotero 打开的，批注无处保存');
+  commentSelection.pending = true;
+  let pendingKey;
+  try {
+    await annotations.create(sel, { color: palette()[0].color,
+      onPending(key) {
+        pendingKey = key;
+        selection.clear();
+        popup.open(key);
+        popup.pendingCreate = true;
+        popup.render();
+        popup.edit();
+      },
+      onCommitted(key) {
+        if (popup.key === pendingKey) popup.key = key;
+      },
+    });
+    popup.pendingCreate = false;
+    popup.saveComment();
+    popup.render();
+  } catch (e) {
+    popup.pendingCreate = false;
+    if (popup.key === pendingKey) popup.close();
+    selection.set(sel);
+    note(`评论创建失败：${e.message}`);
+  } finally { commentSelection.pending = false; }
 }
 
 function jumpTo(a) {

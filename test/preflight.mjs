@@ -249,6 +249,7 @@ try {
   await page.click('#ask');
   await sleep(1500);
   const sent = await page.evaluate(() => window.__sent.slice());
+  await page.waitForFunction(() => window.__contexts.items.some(b => b.image));
   const attached = await page.evaluate(() => window.__contexts.items);
   check('chat handoff attaches the selection without sending a message', !sent.some(m => m.kind === 'message') && attached.some(b => b.text.includes('As an inherent') && b.image), `${attached.length} attached blocks`);
   const ctx = sent.filter(m => m.kind === 'context').at(-1);

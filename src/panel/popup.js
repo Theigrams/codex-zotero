@@ -57,6 +57,7 @@ export class AnnotationPopup {
   }
 
   open(key) {
+    if (this.pendingCreate) return;
     if (this.key === key) return;
     this.close();
     this.key = key;
@@ -70,6 +71,7 @@ export class AnnotationPopup {
   }
 
   close() {
+    if (this.pendingCreate) return; // Preserve a typed draft until its annotation has a real key.
     if (this.key === null) return;
     this.saveComment();
     this.key = null;
@@ -96,6 +98,7 @@ export class AnnotationPopup {
     box.textContent = '';
     for (const c of colors) {
       const b = document.createElement('button');
+      b.disabled = !!this.pendingCreate;
       b.dataset.color = c.color;
       b.style.setProperty('--c', c.color);
       b.title = c.title;
@@ -103,9 +106,10 @@ export class AnnotationPopup {
       b.classList.toggle('on', c.color === a.color);
       box.appendChild(b);
     }
+    $('annDelete').disabled = !!this.pendingCreate;
     const kind = { highlight: '', underline: '下划线', image: '区域', note: '便签', ink: '手绘', text: '文字框' }[a.type] ?? a.type;
     $('annMeta').textContent = [`第 ${a.pageLabel} 页`, kind, ...a.tags.filter(Boolean)].filter(Boolean).join(' · ') + (this.error ? ` · ${this.error}` : '');
-    if (!this.editing) this.comment.value = a.comment;
+    if (!this.editing && !this.pendingCreate) this.comment.value = a.comment;
     this.show();
   }
 
@@ -174,10 +178,12 @@ export class AnnotationPopup {
   }
 
   setColor(color) {
+    if (this.pendingCreate) return;
     if (this.key !== null) this.run(() => this.layer.update(this.key, { color }));
   }
 
   saveComment() {
+    if (this.pendingCreate) return;
     const a = this.key !== null && this.layer.find(this.key);
     if (a && this.comment.value !== a.comment) {
       const key = this.key;
@@ -186,6 +192,7 @@ export class AnnotationPopup {
   }
 
   trash() {
+    if (this.pendingCreate) return;
     const key = this.key;
     if (key === null) return;
     this.comment.value = this.layer.find(key)?.comment || ''; // don't save a half-typed comment on the way out

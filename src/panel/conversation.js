@@ -100,7 +100,7 @@ export class Conversation {
 
   async sync() {
     const { text, structured } = this.context();
-    const signature = text + JSON.stringify((this.contextBlocks?.items || []).map(b => b.id)) + (this.research?.signature() || '');
+    const signature = text + JSON.stringify((this.contextBlocks?.items || []).map(b => [b.id, b.image?.length || 0])) + (this.research?.signature() || '');
     if (signature === this.lastContext) return;
     const report = this.reader.doc && !this.elsewhere ? { view: 'paper', ...this.report() }
       : { view: this.note ? 'note' : 'home', note: this.note, docId: null };
@@ -148,8 +148,11 @@ export class Conversation {
       if (addSelection && !await this.contextBlocks?.add()) return;
       await this.sync();
       await this.publishQueue;
-      // The complete reader stays expanded. The host owns the native composer;
-      // preparing context must not collapse the reader or modify its draft.
+      // On the web, return from the expanded reader to the existing conversation.
+      // This does not insert or submit text into the user's draft.
+      if (this.host.remote && this.host.app?.getHostContext()?.availableDisplayModes?.includes('inline')) {
+        await this.host.app.requestDisplayMode({ mode: 'inline' });
+      }
       return true;
     } finally { this.handingOff = false; }
   }
