@@ -31,6 +31,7 @@ test('tunnel configuration is private, validates ids and never returns or passes
   assert.ok(command.args.includes('file:'+f.manager.keyFile));assert.ok(!JSON.stringify(command).includes('private-key'));
   assert.ok(command.args[command.args.indexOf('--mcp-command')+1].includes('--state-root'));
   assert.equal(command.options.env.CONTROL_PLANE_API_KEY,undefined);
+  assert.equal(command.options.env.MCP_STDIO_SEND_INITIALIZED_NOTIFICATION,'true');
   assert.equal(command.options.env.TUNNEL_CLIENT_STATE_DIR,join(f.root,'chat-connection','runtime'));
  } finally {await f.close();}
 });

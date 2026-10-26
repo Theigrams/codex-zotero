@@ -11,6 +11,7 @@ import { bridgeDefinitions, sessionSchema } from './tools.mjs';
 import { requestBridge, listBridgeSessions } from './local.mjs';
 import { modelToolResult } from '../server/tool-policy.mjs';
 import { appSchemas } from '../server/app-schemas.mjs';
+import { ManagedReader } from './managed-reader.mjs';
 import { REMOTE_UI_TOOLS, REMOTE_READS, REMOTE_READER_URI } from './ui-policy.mjs';
 const fail=error=>({isError:true,content:[{type:'text',text:error.message}]});
 
@@ -60,5 +61,9 @@ export function createBridgeServer({ root = process.env.CODEX_ZOTERO_STATE || jo
 }
 if(import.meta.url===`file://${process.argv[1]}`) {
   const index=process.argv.indexOf('--state-root');
-  const server=createBridgeServer(index>=0?{root:process.argv[index+1]}:{});await server.connect(new StdioServerTransport());
+  const root=index>=0?process.argv[index+1]:process.env.CODEX_ZOTERO_STATE || join(homedir(),'.codex','codex-zotero');
+  const backend=process.argv.includes('--managed-reader')?new ManagedReader({root,serverFile:join(dirname(fileURLToPath(import.meta.url)),'server.mjs')}):null;
+  const server=createBridgeServer({root,...(backend?{list:()=>backend.list(),request:(id,args)=>backend.request(id,args)}:{})});
+  if(backend){backend.ensure().catch(()=>{});process.stdin.on('end',()=>backend.close());process.stdin.on('close',()=>backend.close());process.on('SIGTERM',async()=>{await backend.close();process.exit(0);});}
+  await server.connect(new StdioServerTransport());
 }

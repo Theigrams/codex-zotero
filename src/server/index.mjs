@@ -53,13 +53,13 @@ const pool = new HelperPool(join(here, 'pdfkit-helper'), Number(process.env.CODE
 const documents = new Documents({
   pool, cacheRoot: process.env.CODEX_ZOTERO_CACHE || join(homedir(), 'Library', 'Caches', 'codex-zotero'),
 });
-const renderer = new Renderer(pool);
+const renderer = new Renderer(pool,{python:process.env.CODEX_ZOTERO_PYTHON || '',compressScript:join(here,'compress_image.py')});
 const stateRoot = process.env.CODEX_ZOTERO_STATE || join(homedir(), '.codex', 'codex-zotero');
 const state = new State(stateRoot);
 // CODEX_ZOTERO_FAST=1 (the browser preflight only): shorter waits everywhere, so the checks need not sit through
 // the real 3-second polls and 2-second retry backoff.
 const FAST = process.env.CODEX_ZOTERO_FAST === '1';
-const annotations = new Annotations({ root: stateRoot, palette: async () => (await state.prefs()).palette, ...(FAST ? { backoff: [200, 500, 1500, 3000, 6000] } : {}) });
+const annotations = new Annotations({ root: argv.includes('--bridge-service')?join(stateRoot,'web-reader'):stateRoot, authRoot:stateRoot, palette: async () => (await state.prefs()).palette, ...(FAST ? { backoff: [200, 500, 1500, 3000, 6000] } : {}) });
 // MuPDF text repair reuses the PyMuPDF environment the 0.12.0 prototype installed on this machine.
 const text = new TextService({
   pool, script: join(here, 'text_server.py'),
@@ -201,7 +201,7 @@ const forResearch = researchTools(research);
 let chatBridge = null;
 async function setChatBridge(enabled) {
   if(enabled && !chatBridge) chatBridge = await startLocalBridge({ root:stateRoot, definitions:bridgeDefinitions({...forModel,...forResearch}),
-    appCall:async(name,args)=>appTools[name](validateRemoteAppCall(name,args)),
+    appCall:async(name,args)=>{const validated=validateRemoteAppCall(name,args);if(validated.docId&&!validated.docId.startsWith('note:'))await docById(validated.docId);return appTools[name](validated);},
     describe:async()=>{
       const record=live?.docId ? await state.document(live.docId) : null;
       return { document:record ? {docId:live.docId,title:record.title,itemKey:record.itemKey} : null,
@@ -257,7 +257,7 @@ const appTools = {
         error = e.message;
       }
     }
-    return { prefs: await readerPrefs(), ...view, active, error, navSeq: nav.seq, readerSession:chatBridge?.id || null, ...(FAST ? { timing: { navPollMs: 200, annotationsPollMs: 300, mapPollMs: 300 } } : {}) };
+    return { features:{wholePage:true}, prefs: await readerPrefs(), ...view, active, error, navSeq: nav.seq, readerSession:chatBridge?.id || null, ...(FAST ? { timing: { navPollMs: 200, annotationsPollMs: 300, mapPollMs: 300 } } : {}) };
   },
   async panel_poll({ instance, seen = 0 }) {
     const superseded = activeInstance !== null && instance !== activeInstance;
@@ -331,6 +331,7 @@ const appTools = {
     const r = await renderer.strip(documents.get(args.docId), args);
     return { data: r.data, index: r.strip.index };
   },
+  async render_page(args) { return renderer.page(documents.get(args.docId), args); },
   async render_preview(args) {
     return renderer.preview(documents.get(args.docId), args);
   },
@@ -399,7 +400,9 @@ async function openReader({ itemKey, attachmentKey } = {}) {
   return { text, document: doc && { id: doc.id, title: doc.title, itemKey: doc.itemKey, pageCount: doc.pageCount } };
 }
 
+let shuttingDown=false;
 async function shutdown() {
+  if(shuttingDown)return;shuttingDown=true;
   await chatBridge?.close();
   research.close();
   analysis.close();
@@ -413,10 +416,13 @@ if (argv.includes('--chat-bridge') || (await jsonFile(join(stateRoot, 'chat-brid
 }
 const tunnel = new TunnelManager({root:stateRoot,bridgeFile:join(here,'chat-bridge.mjs'),setBridge:setChatBridge,getBridge:()=>chatBridge,
   binary:process.env.CODEX_ZOTERO_TUNNEL_BINARY || undefined});
-if(!argv.includes('--standalone'))setTimeout(()=>tunnel.resume().catch(()=>{}),1000).unref();
+if(!argv.includes('--standalone')&&!argv.includes('--bridge-service'))setTimeout(()=>tunnel.resume().catch(()=>{}),1000).unref();
 
 
-if (argv.includes('--standalone')) {
+if(argv.includes('--bridge-service')){
+  process.send?.({type:'reader-ready',readerSession:chatBridge.id});
+  process.stdin.resume();process.stdin.on('end',shutdown);process.stdin.on('close',shutdown);process.on('SIGTERM',shutdown);
+} else if (argv.includes('--standalone')) {
   // Browser preflight: same panel, tools reached over HTTP instead of the Codex host bridge.
   if (option('--pdf')) await openSource({ path: option('--pdf') });
   else if (option('--item')) await openSource(await resolvePdf({ itemKey: option('--item') }));

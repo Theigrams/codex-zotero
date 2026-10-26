@@ -50,6 +50,7 @@ export const appSchemas = {
     docId: z.string(), page: z.number().int().min(1), mode: z.enum(RENDER_MODES), cssWidth: z.number().positive().max(8000),
     dpr: z.number().positive().max(4), index: z.number().int().min(0), crop: z.boolean().optional(), priority: z.number().int().min(0).max(3).optional(),
   },
+  render_page: {docId:z.string(),page:z.number().int().min(1),cssWidth:z.number().positive().max(8000),dpr:z.number().positive().max(4),crop:z.boolean().optional(),priority:z.number().int().min(0).max(3).optional()},
   render_preview: { docId: z.string(), page: z.number().int().min(1), crop: z.boolean().optional() },
   position_save: { docId: z.string(), page: z.number().int().min(1), offset: z.number(), zoom: z.number() },
   prefs_set: {

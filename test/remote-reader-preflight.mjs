@@ -15,12 +15,13 @@ if(!process.argv.includes('--pdf'))throw new Error('Pass --pdf FILE');
 const root=await mkdtemp(join(tmpdir(),'zotero-web-reader-'));
 const zotero=await fakeZotero({pdf,title:'Remote reader test paper'});
 const env={...process.env,CODEX_ZOTERO_STATE:join(root,'state'),CODEX_ZOTERO_CACHE:join(root,'cache'),CODEX_ZOTERO_API:zotero.url,CODEX_ZOTERO_FAST:'1',MINERU_API_KEY:''};
-const native=spawn(process.execPath,['out/plugin/dist/server.mjs','--standalone','--chat-bridge'],{env,stdio:['ignore','ignore','pipe']});
-const nativeUrl=await new Promise((resolve,reject)=>{let log='';native.stderr.on('data',c=>{log+=c;const m=log.match(/standalone panel: (\S+)/);if(m)resolve(m[1]);});native.on('exit',()=>reject(new Error(log)));});
+const managed=process.env.TEST_MANAGED_READER==='1';
+const native=managed?null:spawn(process.execPath,['out/plugin/dist/server.mjs','--standalone','--chat-bridge'],{env,stdio:['ignore','ignore','pipe']});
+const nativeUrl=managed?null:await new Promise((resolve,reject)=>{let log='';native.stderr.on('data',c=>{log+=c;const m=log.match(/standalone panel: (\S+)/);if(m)resolve(m[1]);});native.on('exit',()=>reject(new Error(log)));});
 const client=new Client({name:'web-reader-check',version:'1'});
-const transport=new StdioClientTransport({command:process.execPath,args:['out/plugin/dist/chat-bridge.mjs'],env,stderr:'pipe'});
+const transport=new StdioClientTransport({command:process.execPath,args:['out/plugin/dist/chat-bridge.mjs',...(managed?['--managed-reader']:[])],env,stderr:'pipe'});
 let browser,http;
-const calls=[];
+const calls=[];let injected=false,manualBlocked=process.env.TEST_REMOTE_FAIL_MANUAL==='1';
 try {
  await client.connect(transport);
  const {tools}=await client.listTools();const entry=tools.find(t=>t.name==='reader_open');
@@ -34,10 +35,14 @@ try {
  const host=await readFile('out/plugin/dist/host.html','utf8');
  http=createServer(async(req,res)=>{
   try {
+   if(req.url==='/test/recover'){manualBlocked=false;return res.end('ok');}
    if(req.url.startsWith('/host')){res.setHeader('Content-Type','text/html');return res.end(host);}
    if(req.url==='/panel'){res.setHeader('Content-Type','text/html');return res.end(html);}
    if(req.url==='/api/tool'){
     let body='';for await(const c of req)body+=c;const args=JSON.parse(body);calls.push(args);
+    if(args.name==='render_page' && (manualBlocked || process.env.TEST_REMOTE_FAIL_ONCE==='1'&&!injected)){
+      injected=true;res.setHeader('Content-Type','application/json');return res.end(JSON.stringify({isError:true,content:[{type:'text',text:'MCP server is not initialized; send initialize and notifications/initialized before operational requests'}]}));
+    }
     res.setHeader('Content-Type','application/json');return res.end(JSON.stringify(await client.callTool(args)));
    }
    res.writeHead(404);res.end();
@@ -56,7 +61,11 @@ try {
  await frame.click('#readerMore');await frame.click('#readerDisplay');
  await page.waitForFunction(()=>window.__displayRequests.includes('fullscreen'));
  await frame.type('#search','Remote');await frame.waitForSelector('#homeList li');await frame.click('#homeList li');
- await frame.waitForFunction(()=>window.__reader?.doc?.itemKey==='PAPER001' && document.querySelector('.page img'));
+ if(process.env.TEST_REMOTE_FAIL_MANUAL==='1'){
+  await frame.waitForSelector('.page-status button',{visible:true});
+  await page.evaluate(()=>fetch('/test/recover'));await frame.click('.page-status button');
+ }
+ await frame.waitForFunction(()=>window.__reader?.doc?.itemKey==='PAPER001' && window.__reader.imageStats.loaded>0);
  const doc=await frame.evaluate(()=>({id:window.__reader.doc.id,pageCount:window.__reader.doc.pageCount}));
  assert.equal(await frame.$eval('#localOcrSettings',e=>getComputedStyle(e).display),'none');
  assert.equal(await frame.$eval('#localConnectionSettings',e=>getComputedStyle(e).display),'none');
@@ -82,8 +91,8 @@ try {
  assert.ok(calls.length>10);assert.ok(calls.every(c=>c.arguments.readerSession===session));
  assert.ok(!calls.some(c=>['mineru_configure','tunnel_configure','document_file'].includes(c.name)));
  await mkdir('diagnostics',{recursive:true});await page.screenshot({path:'diagnostics/remote-reader.png'});
- assert.deepEqual(errors,[]);
+ assert.deepEqual(errors,[]);if(process.env.TEST_REMOTE_FAIL_ONCE==='1'){assert.ok(injected);assert.ok(calls.filter(c=>c.name==='render_page').length>=2);assert.equal(await frame.evaluate(()=>window.__reader.imageStats.failed),0);}
  console.log(JSON.stringify({pass:true,checks:['resource-linked reader_open','empty library search','PDF rendering through remote MCP','embedded fonts','standard web host bridge','inline/fullscreen toggle','session-scoped calls','context without chat submission','highlight persistence','comment persistence','model reads user annotations','page text read','zoom and navigation','credentials hidden'],calls:calls.length}));
 }finally{
- await browser?.close();if(http)await new Promise(r=>http.close(r));await client.close();await transport.close();native.kill();await new Promise(r=>native.exitCode!==null?r():native.once('exit',r));await zotero.close();await rm(root,{recursive:true,force:true});
+ await browser?.close();if(http)await new Promise(r=>http.close(r));await client.close();await transport.close();if(native){native.kill();await new Promise(r=>native.exitCode!==null?r():native.once('exit',r));}await zotero.close();await rm(root,{recursive:true,force:true});
 }

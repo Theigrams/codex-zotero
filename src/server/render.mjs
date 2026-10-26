@@ -1,12 +1,17 @@
 // Strip and preview rendering with an on-disk cache. Images travel to the panel as base64:
 // Codex blocks panel requests to 127.0.0.1 (spike S1).
+import { remotePagePlan } from '../shared/remote-page.mjs';
+import { execFile } from 'node:child_process';
+import { promisify } from 'node:util';
 import { readFile, stat, unlink } from 'node:fs/promises';
 import { randomUUID } from 'node:crypto';
 import { join } from 'node:path';
 import { GRAY_GAMMA, fullRegion, pagePlan, previewPlan, stripsFor } from '../shared/layout.mjs';
+const exec=promisify(execFile);
 
 export class Renderer {
-  constructor(pool) {
+  constructor(pool, {python='',compressScript}={}) {
+    Object.assign(this,{python,compressScript});
     this.pool = pool;
     this.inflight = new Map();
   }
@@ -28,6 +33,39 @@ export class Renderer {
       tile: [0, strip.y, plan.bitmapW, strip.h], ...(plan.mode === 'aligned' ? { weight: GRAY_GAMMA } : {}),
     }, priority);
     return { data: (await readFile(file)).toString('base64'), plan, strip };
+  }
+
+  async page(doc, {page,cssWidth,dpr,crop=true,priority=0}) {
+    const region=this.region(doc,page,crop);
+    let density=dpr;
+    for(let attempt=0;attempt<3;attempt++) {
+      const plan=remotePagePlan(cssWidth,density,{w:region[2],h:region[3]});
+      const file=join(doc.cacheDir,`${crop?'c':'f'}-${plan.key}-p${page}.png`);
+      await this.ensure(doc,file,{op:'render',page,region,scale:plan.scale,full:[plan.bitmapW,plan.bitmapH],weight:GRAY_GAMMA},priority);
+      const png=await readFile(file);
+      const encoded=await this.compress(file,png);
+      const bytes=encoded.bytes;
+      if(bytes.length<=4*1024*1024)return {data:bytes.toString('base64'),mimeType:encoded.mimeType};
+      // Even a noisy scan must fit the private transport, without splitting the page into requests.
+      density=(plan.bitmapW/cssWidth)*Math.sqrt(3*1024*1024/bytes.length);
+    }
+    throw new Error('此页图片过大，请缩小后重试。');
+  }
+
+  async compress(file,png) {
+    if(this.python && this.compressScript && this.webpUnavailable!==true) {
+      const out=file+'.webp';
+      try {
+        try { await stat(out); }
+        catch {
+          if(!this.inflight.has(out))this.inflight.set(out,exec(this.python,['-I',this.compressScript,file,out],{timeout:15000,maxBuffer:16384}).finally(()=>this.inflight.delete(out)));
+          await this.inflight.get(out);
+        }
+        const bytes=await readFile(out);
+        if(bytes.length<png.length)return {bytes,mimeType:'image/webp'};
+      } catch { this.webpUnavailable=true; } // Optional Pillow support; PDFKit PNG always remains available.
+    }
+    return {bytes:png,mimeType:'image/png'};
   }
 
   async preview(doc, { page, crop = true }) {

@@ -11,12 +11,12 @@ Chat 中的私有远程插件
   → dist/chat-bridge.mjs（stdio MCP）
   → reader_open 返回 MCP App HTML；界面操作和模型读取分别路由
   → 当前用户私有 Unix socket
-  → 已运行的阅读器服务 → Zotero API / MuPDF / MinerU 缓存与任务
+  → 隧道管理的专用阅读器后台 → Zotero API / MuPDF / MinerU 缓存与任务
 ```
 
-PDF 与缓存继续存放在本机。模型请求读取时，正文/评论会通过隧道返回给 Chat；这不是“数据从不离开本机”。需要 OCR 时仍遵守现有全局许可，仅上传给已配置的 MinerU。桥接不启动第二套 PDF/OCR/批注写入服务，因此本地界面与网页界面共用任务、缓存、批注写入队列和最新批注。网页不直接访问 localhost 或本机文件，PDF 图片和文字通过有权限的工具返回。
+PDF 与缓存继续存放在本机。模型请求读取时，正文/评论会通过隧道返回给 Chat；这不是“数据从不离开本机”。需要 OCR 时仍遵守现有全局许可，仅上传给已配置的 MinerU。隧道为网页管理一个专用阅读器后台，复用原有 PDF/OCR/批注代码与本机缓存。网页中的操作都进入该后台的同一任务队列，批注继续通过 Zotero API 保存；桌面阅读器通过 Zotero 版本检查与轮询看到变化。网页不直接访问 localhost 或本机文件，PDF 图片和文字通过有权限的工具返回。
 
-桥接默认关闭。它只监听当前用户权限的 Unix socket，不创建 TCP/HTTP 公网监听，不需要为本机设置入站端口。每个阅读器服务使用独立 readerSession；模型必须携带上下文中的 readerSession，涉及文档的操作还必须提供 docId。服务重启后旧 readerSession 明确失效，不能默默跳到另一篇论文。
+桥接默认关闭。它只监听当前用户权限的 Unix socket，不创建 TCP/HTTP 公网监听，不需要为本机设置入站端口。网页连接使用独立 readerSession；模型必须携带上下文中的 readerSession，涉及文档的操作还必须提供 docId。专用后台意外退出后按需重启，恢复文档与界面状态，逻辑 readerSession 保持不变。整个桥接/隧道进程重启则产生新标识，旧卡片需要重新打开；不默默切换到另一个桌面对话。
 
 ## 分享给其他用户
 
@@ -71,7 +71,7 @@ PDF 与缓存继续存放在本机。模型请求读取时，正文/评论会通
 
 网页界面复用本地阅读器，支持原文选区、版面块、上下文、高亮/评论、研究文献集合和整篇 OCR。网页菜单提供「展开阅读器 / 返回对话」，通过标准 display-mode 请求切换 inline/fullscreen；具体排布与原生对话框位置由 ChatGPT 决定，插件不能强制桌面式侧边停靠。当前服务仍只维护一个活动阅读面板，新界面会替代旧界面的活动状态。
 
-升级后需完全重启桌面应用，让本机服务加载新的界面工具；已有隧道运行进程也需要重连。Chat 可能缓存旧工具列表，需在插件连接设置刷新工具，必要时重新连接。新的工具列表应包含 `reader_open`，它关联 `ui://codex-zotero/remote-reader-v1.html`。
+升级网页功能后断开并重新连接隧道，让它加载新版桥接和专用后台；桌面本地面板仍需完全重启桌面应用加载更新。Chat 可能缓存旧工具列表，需在插件连接设置刷新工具，必要时重新连接。新的工具列表应包含 `reader_open`，它关联 `ui://codex-zotero/remote-reader-v2.html`。
 
 验收提示：
 
@@ -81,7 +81,7 @@ PDF 与缓存继续存放在本机。模型请求读取时，正文/评论会通
 
 ## 对外工具与边界
 
-独立暴露 15 个有 schema 的操作：reader_state、search_library、paper_outline、read_pages、find_in_paper、list_annotations、read_notes、ocr_status、paper_full_text、ocr_start、research_status、research_annotations、research_ocr_start、research_ocr_status、research_ocr_cancel；另有只返回连接元数据的 reader_connections。另外提供关联 MCP App 资源的 `reader_open`。界面的 33 个内部操作设为 `ui.visibility: [app]`，不作为模型的批注写入工具。不是“通用执行任意操作”的工具。
+独立暴露 15 个有 schema 的操作：reader_state、search_library、paper_outline、read_pages、find_in_paper、list_annotations、read_notes、ocr_status、paper_full_text、ocr_start、research_status、research_annotations、research_ocr_start、research_ocr_status、research_ocr_cancel；另有只返回连接元数据的 reader_connections。另外提供关联 MCP App 资源的 `reader_open`。界面的 34 个内部操作设为 `ui.visibility: [app]`，不作为模型的批注写入工具。不是“通用执行任意操作”的工具。
 
 - 阅读调用保持版本和分页语义，已读取版本在当前对话中复用，不建立跨对话全局已读标记。
 - 多篇比较先取得明确选择的 itemKeys，再按需获取状态、OCR 和全文。研究批量 OCR 仍由原有队列控制并发。
@@ -105,3 +105,23 @@ node test/tunnel-settings-preflight.mjs --pdf /absolute/path/to/test.pdf
 设置预检使用替身 tunnel-client 验证用户点击流程、动态启停、密码清空、窄屏与上下文隔离；不把模拟的 ready 状态视为真实 OpenAI 连接成功。
 
 网页阅读器预检通过标准 AppBridge（不提供桌面专属扩展）、真实 stdio MCP 与私有 socket，验证空文库搜索、PDF 渲染、选区上下文、高亮/评论保存、模型随后读取评论、模式切换和会话路由。测试不等同于用户实际 ChatGPT 账号中的 UI 验收。
+
+## 网页渲染和会话恢复
+
+网页版使用 `render_page` 一次取得当前整页，替代本地阅读器的多个 `render_strip` 往返。优先加载可见页，限制为两个在途请求；不为不可见页面提前下载整页，字形/链接读取会合并并缓存；最近的整页图片另有 8 MiB 有界缓存，回翻不重复传输。页面图最大 3200 × 5600 像素；极大或高噪声图片按传输上限降低尺寸，选区仍使用原 PDF 坐标。普通页面以 PNG 为基准，有 Pillow 时使用逐像素一致的无损 WebP，仅在文件更小时采用；没有 Pillow 仍可阅读。
+
+网页将导航轮询调整为 5 秒，外部批注更新轮询为 10 秒。用户自己写入的批注立即显示并保存，不等待轮询。读取失败采用有限退避；写入、OCR 启动不自动重放。页面加载失败提供本页「重试」，保留已显示内容。
+
+官方 tunnel-client 对 stdio 启用 `MCP_STDIO_SEND_INITIALIZED_NOTIFICATION=true`。它只在调用方成功完成 initialize 后补发协议要求的通知，不伪造 initialize，也不能替代断线后宿主的重新连接。若仍出现「MCP server is not initialized」，刷新 Chat 中的连接，让宿主重新握手；重新 OCR 无助于该错误。
+
+本机隔离测试对每次远程请求增加 250 ms 延迟，并串行执行隧道请求：同一 12 页 PDF 的首次清晰时间约 1.36 s → 0.91 s，首屏期间请求 19 → 9，传输量约 0.82 MB → 0.36 MB。此为固定测试环境的对比，不是实际账号或所有网络的延迟保证。`test/remote-performance-preflight.mjs` 可复测；`TEST_REMOTE_FAIL_ONCE=1 node test/remote-reader-preflight.mjs --pdf …` 验证初始化错误后的读取恢复。
+
+## 专用网页后台
+
+受管隧道以 `--managed-reader` 启动桥接；桥接启动一个 `--bridge-service` 阅读器子进程，通过私有 Unix socket 调用，不开放额外 HTTP 端口。网页无需依赖某个桌面对话已打开的 MCP 服务，也无需先打开本地阅读面板。桥接关闭时子进程一并退出；子进程意外退出时，下次请求单次重启，恢复已有文档与界面实例。父子进程之间只通过管道和 socket 通信。
+
+`reader_connections` 对网页返回该专用后台的逻辑连接，不混入各个桌面对话的临时服务。实际 API、Python 与缓存路径使用本机配置，MinerU 密钥仍从私有文件读取。后台重启时不会自动重放失败的批注写入。
+
+`test/managed-reader-preflight.mjs` 覆盖完全没有桌面服务时启动、并发单次启动、后台退出后的恢复、逻辑标识稳定与非法标识拒绝；`TEST_MANAGED_READER=1` 的网页预检实际通过此生命周期读图、选择与写批注。
+
+网页后台将待写入队列存于 `web-reader/` 子目录，避免与桌面对话覆盖同一个队列文件；沿用全局 Zotero 授权，实际修改仍带 Zotero 版本检查。

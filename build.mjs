@@ -33,7 +33,7 @@ export async function buildPlugin({ python = process.env.CODEX_ZOTERO_PYTHON || 
   await mkdir('out/.agents/plugins', { recursive: true });
 
   execFileSync('swiftc', ['-O', 'native/PDFKitHelper.swift', '-o', `${root}/dist/pdfkit-helper`], { stdio: 'inherit' });
-  for (const f of ['text_server.py', 'text_layer.py', 'document_worker.py']) await writeFile(`${root}/dist/${f}`, await readFile(`native/${f}`));
+  for (const f of ['text_server.py', 'text_layer.py', 'document_worker.py', 'compress_image.py']) await writeFile(`${root}/dist/${f}`, await readFile(`native/${f}`));
   await cp('skills', `${root}/skills`, { recursive: true });
 
   await build({

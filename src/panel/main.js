@@ -19,7 +19,7 @@ import { connect } from './host.js';
 import { Reader } from './reader.js';
 import { Selection } from './selection.js';
 import { Settings } from './settings.js';
-import { timing } from './timing.js';
+import { timing, remoteTiming } from './timing.js';
 import { ResearchPanel } from './research.js';
 import { Interactions } from './interactions.js';
 
@@ -683,9 +683,10 @@ async function start() {
   showMessage('正在打开…');
   try {
     const hello = await host.call('panel_hello', { instance });
+    reader.remote = !!host.remote && hello.features?.wholePage===true;
     conversation.readerSession = hello.readerSession || null;
     prefs = hello.prefs;
-    Object.assign(timing, hello.timing || {});
+    Object.assign(timing, host.remote ? remoteTiming : hello.timing || {});
     keys = keymap(prefs.keys);
     tabs = hello.tabs;
     navSeen = hello.navSeq;
@@ -704,6 +705,7 @@ async function main() {
     scroller: $('scroller'),
     content: $('content'),
     call: host.call,
+    remote: host.remote,
     topInset: BAR,
     onPage: page => {
       updateBar(page);

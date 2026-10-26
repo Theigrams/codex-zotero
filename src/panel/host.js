@@ -1,4 +1,5 @@
 // Talks to the server: through the Codex host bridge inside Codex, over HTTP in the browser preflight.
+import { remoteCalls } from './remote-calls.js';
 import { OpenAIExtensions } from '@openai/mcp-extensions/app';
 import { App, applyDocumentTheme, applyHostStyleVariables } from '@modelcontextprotocol/ext-apps';
 
@@ -30,12 +31,13 @@ export async function connect({ displayModes = ['fullscreen'] } = {}) {
       const timer=setTimeout(()=>{sessionWaiters.delete(finish);reject(new Error('未收到阅读器连接标识，请重新打开阅读器。'));},10000);
       sessionWaiters.add(finish);
     });
-    const callTool = async (name,args={}) => {
+    const send = async (name,args={}) => {
       const scoped=remote?{...args,readerSession:await getSession()}:args;
       const r=await app.callServerTool({name,arguments:scoped});
       if(r.isError)throw new Error(r.content?.find(c=>c.type==='text')?.text || `${name} failed`);
       return r;
     };
+    const callTool=remote?remoteCalls(send):send;
     const host = { callTool, app, extensions, remote, mode: 'host', initialResult: null,
       onResult(fn) { results.add(fn); return () => results.delete(fn); },
       async call(name, args = {}) { return (await callTool(name,args)).structuredContent; },

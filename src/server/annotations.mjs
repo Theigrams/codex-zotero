@@ -137,10 +137,10 @@ function patchData(data, patch, palette) {
 // Ops: { id, kind: 'create'|'update'|'delete', attachmentKey, key, payload?, patch?, before?, status, error, tries, next }
 // status: 'pending' (will be retried by itself), 'failed' (waits for a retry from the drawer), 'conflict' (needs the user).
 export class Writer {
-  constructor({ root, fetch = zoteroFetch, now = Date.now, onChange = () => {}, backoff = BACKOFF_S.map(s => s * 1000) }) {
+  constructor({ root, authRoot=root, fetch = zoteroFetch, now = Date.now, onChange = () => {}, backoff = BACKOFF_S.map(s => s * 1000) }) {
     Object.assign(this, { root, fetch, now, onChange, backoff });
     this.file = join(root, 'writes.json');
-    this.authFile = join(root, 'zotero-auth.json');
+    this.authFile = join(authRoot, 'zotero-auth.json');
     this.ops = [];
     this.rev = 0;
     this.running = null;
@@ -367,10 +367,10 @@ export class Writer {
 
 export class Annotations {
   // palette(): the user's colors and tags (settings), read whenever an annotation is made or recolored.
-  constructor({ root, fetch = zoteroFetch, backoff, palette = async () => undefined }) {
+  constructor({ root, authRoot=root, fetch = zoteroFetch, backoff, palette = async () => undefined }) {
     this.palette = palette;
     this.cache = new AnnotationCache({ fetch });
-    this.writer = new Writer({ root, fetch, backoff, onChange: key => this.cache.invalidate(key) });
+    this.writer = new Writer({ root, authRoot, fetch, backoff, onChange: key => this.cache.invalidate(key) });
     this.last = new Map(); // attachment → last list that loaded, kept while Zotero is unreachable
     this.deleted = new Map(); // attachment → payloads of annotations deleted here, newest last (undo)
   }

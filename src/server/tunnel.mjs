@@ -36,6 +36,10 @@ export class TunnelManager {
   async cli(args,timeout=45000) {
     // Isolate aliases/profiles from unrelated manually configured tunnels. Do not inherit API credentials.
     const env=Object.fromEntries(['HOME','PATH','LANG','LC_ALL','TMPDIR','HTTPS_PROXY','HTTP_PROXY','NO_PROXY','SSL_CERT_FILE'].filter(k=>process.env[k]).map(k=>[k,process.env[k]]));
+    // Official compatibility shim closes the gap between initialize and App tool calls.
+    // The caller still owns initialize; this only supplies its mandatory notification.
+    env.MCP_STDIO_SEND_INITIALIZED_NOTIFICATION='true';
+    for(const key of ['CODEX_ZOTERO_PYTHON','CODEX_ZOTERO_LAYOUT_MODEL','CODEX_ZOTERO_API','CODEX_ZOTERO_CACHE'])if(process.env[key])env[key]=process.env[key];
     env.TUNNEL_CLIENT_STATE_DIR=join(this.directory,'runtime');
     return this.run(this.binary,args,{timeout,maxBuffer:256*1024,env});
   }
@@ -133,7 +137,7 @@ export class TunnelManager {
       if(!ID.test(cfg.tunnelId))throw Object.assign(new Error(),{userMessage:'已保存的隧道 ID 无效，请重新复制并保存。'});
       if(!await exists(this.binary))throw Object.assign(new Error(),{userMessage:'请先安装连接组件。'});
       await this.setBridge(true);
-      const command=[process.execPath,this.bridgeFile,'--state-root',this.root].map(quote).join(' ');
+      const command=[process.execPath,this.bridgeFile,'--managed-reader','--state-root',this.root].map(quote).join(' ');
       await this.cli(['runtimes','connect','--alias',this.alias,'--profile',this.alias,'--profile-dir',join(this.directory,'profiles'),
         '--tunnel-id',cfg.tunnelId,'--runtime-api-key',`file:${this.keyFile}`,'--mcp-command',command,'--json']);
     });
