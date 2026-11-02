@@ -3,6 +3,7 @@
 // it is for finding your way around, so it errs towards leaving things out. Cached per PDF fingerprint.
 import { join } from 'node:path';
 import { atomicJSON, jsonFile } from './files.mjs';
+import { TEXT_VERSION } from './text.mjs';
 
 const VERSION = 2; // 2: x (the line's centre) for captions and equations, to outline the right column
 const NAMED = /^(abstract|introduction|related work|background|method(s|ology)?|experiments?|results|discussion|conclusions?|references|acknowledg(e)?ments?|appendix\b.*)$/i;
@@ -54,7 +55,7 @@ export function scanPage(lines, k) {
 }
 
 export async function buildOutline(doc, { pool, paper }) {
-  const file = join(doc.cacheDir, `outline-v${VERSION}.json`);
+  const file = join(doc.cacheDir, `outline-v${VERSION}-t${TEXT_VERSION}.json`); // built from the text layer
   const cached = await jsonFile(file, null);
   if (cached) return cached;
   const { outline: bookmarks = [] } = await pool.run(doc.path, { op: 'outline' }, 2).catch(() => ({}));

@@ -7,7 +7,7 @@ import { join } from 'node:path';
 import { atomicJSON } from './files.mjs';
 import { mergeText, packGlyphs } from './textlayer.mjs';
 
-const TEXT_VERSION = 1;
+export const TEXT_VERSION = 2; // 2: numeric glyph names (C101) decoded in fonts shown to be English
 
 class PythonText {
   constructor(python, script) {
@@ -57,19 +57,18 @@ export class TextService {
     this.python = python;
     this.script = script;
     this.mupdf = null;
+    this.starting = null;
     this.inflight = new Map();
   }
 
-  async repairer() {
-    if (this.mupdf === null) {
-      try {
-        await access(this.python);
-        this.mupdf = new PythonText(this.python, this.script);
-      } catch {
-        this.mupdf = false;
-      }
+  // The MuPDF process, or null without Python. One that stopped (crashed, killed) is replaced on the next
+  // request; concurrent requests share one start.
+  repairer() {
+    if (!this.starting || this.mupdf?.alive === false) {
+      this.mupdf = undefined;
+      this.starting = access(this.python).then(() => (this.mupdf = new PythonText(this.python, this.script)), () => (this.mupdf = false));
     }
-    return this.mupdf && this.mupdf.alive ? this.mupdf : null;
+    return this.starting.then(m => (m && m.alive ? m : null));
   }
 
   // → { t: [glyph strings], b: flat rects (page points, top-left), l: line numbers, repaired: bool }
@@ -84,7 +83,10 @@ export class TextService {
         } catch {}
         const pk = await this.pool.run(doc.path, { op: 'chars', page }, priority);
         const mupdf = await this.repairer();
-        const mu = mupdf ? await mupdf.page(doc.path, page).catch(() => null) : null;
+        const mu = mupdf ? await mupdf.page(doc.path, page).catch(async () => {
+          const again = await this.repairer(); // once more in a new process if that one stopped mid-page
+          return again && again !== mupdf ? again.page(doc.path, page).catch(() => null) : null;
+        }) : null;
         const packed = { ...packGlyphs(mergeText(pk, mu)), repaired: !!mu };
         if (mu) await atomicJSON(file, packed); // unrepaired text is not cached, so a later run can repair it
         return packed;

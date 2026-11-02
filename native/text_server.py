@@ -3,11 +3,20 @@
   {"id": 1, "path": "/x.pdf", "page": 3}  ->  {"id": 1, "ok": true, "chars": [...], "repairs": n, "issues": n}
 
 text_layer.py is the 0.12.0 prototype's verified glyph repair (ligatures, Σ/Λ/∑ from embedded glyph
-names, explicit unresolved glyphs), copied unchanged. Run with -I so nothing next to the PDF can shadow imports.
+names, explicit unresolved glyphs), plus numeric glyph names in fonts shown to be English text.
+Run with -I so nothing next to the PDF can shadow imports.
 """
+import ctypes
 import json
 import os
 import sys
+
+# PyMuPDF 1.28 returns None without a reference from get_texttrace (each span's "linewidth") and get_fonts,
+# ~100 references per page and over a thousand on dense ones. Before Python 3.12 None is not immortal, so a
+# long-lived process died with "none_dealloc" after a few dozen pages and every later page went unrepaired.
+# Give None the effectively immortal count it has from 3.12 on (ob_refcnt is PyObject's first field).
+if sys.version_info < (3, 12):
+    ctypes.c_ssize_t.from_address(id(None)).value += 1 << 40
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 import text_layer  # noqa: E402

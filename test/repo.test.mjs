@@ -25,7 +25,7 @@ function files() {
 // Standard-library modules the native helpers may import. A new stdlib import fails the check once;
 // add it here rather than to requirements.txt.
 const STDLIB = new Set(['io', 'json', 'math', 'sys', 'os', 're', 'unicodedata', 'struct', 'zlib', 'base64', 'time',
-  'collections', 'itertools', 'functools', 'pathlib', 'hashlib', 'traceback']);
+  'collections', 'itertools', 'functools', 'pathlib', 'hashlib', 'traceback', 'ctypes']);
 // Import name → name in requirements.txt, where they differ.
 const DIST = { fitz: 'pymupdf', fontTools: 'fonttools', PIL: 'pillow' };
 

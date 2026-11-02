@@ -31,6 +31,13 @@ test('loose search matches a quote across punctuation and hyphenation', () => {
   assert.equal(plainText(p), 'The singularity of fiveaxis machines is a well\\nknown problem.'.replace('\\n', '\n'));
 });
 
+test('loose search ignores accents, also one drawn as its own glyph', () => {
+  const b = page(['a quintic spherical Be´zier spline']); // older PDFs draw é as e plus a spacing ´
+  const [[a, z]] = findAll(b, 'spherical Bézier spline', { loose: true });
+  assert.equal(b.t.slice(a, z + 1).join(''), 'spherical Be´zier spline');
+  assert.equal(findAll(page(['Bézier curves']), 'Bezier', { loose: true }).length, 1);
+});
+
 test('quotes are located on the nearest page first, long quotes by their two ends', async () => {
   const other = page(['nothing here', 'The singularity of five-', 'axis machines']);
   const doc = { pageCount: 2, pages: [{ label: '1' }, { label: '2' }] };

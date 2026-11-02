@@ -17,7 +17,7 @@ curl -s http://127.0.0.1:23119/connector/ping                        # Zotero �
 
 ## 1. （可选）PyMuPDF 与 fontTools
 
-PDF 里的连字（fi、fl）和一些符号（Σ、Λ）常常取不出正确的文字。装了 PyMuPDF 和 fontTools（读取 PDF 内嵌字体的字形名），插件会用它们修复，选中的文字和发给 Codex 的原文更准确。不装也能用。两者都列在 `native/requirements.txt`。
+PDF 里的连字（fi、fl）和一些符号（Σ、Λ）常常取不出正确的文字；有些旧论文（如 2000 年前后的 Elsevier 期刊）整篇正文都取不出。装了 PyMuPDF 和 fontTools（读取 PDF 内嵌字体的字形名），插件会用它们修复，选中的文字和发给 Codex 的原文更准确。不装也能用。两者都列在 `native/requirements.txt`。
 
 ```bash
 python3 -m pip install pymupdf fonttools

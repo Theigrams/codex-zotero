@@ -69,3 +69,39 @@ test('selection helpers: hit, word, line, text and rects', () => {
   assert.equal(rects.length, 2);
   assert.deepEqual(rects[1], [0, 30, 15, 10]);
 });
+
+test('a MuPDF process that stops mid-page is replaced and the page asked again', async () => {
+  const { TextService } = await import('../src/server/text.mjs');
+  const { chmodSync, existsSync, mkdtempSync, rmSync, writeFileSync } = await import('node:fs');
+  const { tmpdir } = await import('node:os');
+  const { join } = await import('node:path');
+  const dir = mkdtempSync(join(tmpdir(), 'text-'));
+  try {
+    // A stand-in for text_server.py: the first process dies on its first request (as PyMuPDF's None
+    // refcount bug made the real one do); later ones answer.
+    const crashed = join(dir, 'crashed');
+    writeFileSync(join(dir, 'server.mjs'), `
+      import { existsSync, writeFileSync } from 'node:fs';
+      import { createInterface } from 'node:readline';
+      for await (const line of createInterface({ input: process.stdin })) {
+        if (!existsSync(${JSON.stringify(crashed)})) { writeFileSync(${JSON.stringify(crashed)}, ''); process.exit(1); }
+        const { id } = JSON.parse(line);
+        process.stdout.write(JSON.stringify({ id, ok: true, chars: [{ t: 'e', r: [0, 0, 5, 10], src: 'glyph-code' }] }) + '\\n');
+      }`);
+    const python = join(dir, 'python');
+    writeFileSync(python, `#!/bin/sh\nexec ${JSON.stringify(process.execPath)} ${JSON.stringify(join(dir, 'server.mjs'))}\n`);
+    chmodSync(python, 0o755);
+    const pool = { run: async () => ({ text: 'C', rects: [0, 0, 5, 10], lines: [[0, 1]] }) };
+    const text = new TextService({ pool, python, script: 'unused' });
+    const doc = { id: 'd', path: '/x.pdf', cacheDir: join(dir, 'cache') };
+    const [one, two] = await Promise.all([text.page(doc, 1), text.page(doc, 2)]);
+    assert.ok(existsSync(crashed));
+    for (const p of [one, two]) {
+      assert.equal(p.repaired, true);
+      assert.deepEqual(p.t, ['e']);
+    }
+    text.close();
+  } finally {
+    rmSync(dir, { recursive: true, force: true });
+  }
+});

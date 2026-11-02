@@ -236,7 +236,7 @@ export function searchable(page, { loose = false } = {}) {
       }
       continue;
     }
-    for (const ch of t.toLowerCase()) {
+    for (const ch of loose ? fold(t) : t.toLowerCase()) {
       if (loose ? !/[\p{L}\p{N}]/u.test(ch) : /\s/.test(ch) && (!s || s.endsWith(' '))) continue;
       s += /\s/.test(ch) ? ' ' : ch;
       map.push(i);
@@ -246,9 +246,13 @@ export function searchable(page, { loose = false } = {}) {
   return { s, map };
 }
 
+// Loose matching also drops accents: some PDFs draw "é" as "e" plus a separate spacing accent ("Be´zier"),
+// which then matches the "Bézier" a model quotes. Each character NFKD yields maps back to the glyph it came from.
+const fold = t => t.toLowerCase().normalize('NFKD');
+
 export const searchKey = (query, { loose = false } = {}) => {
   const q = query.toLowerCase();
-  return loose ? [...q].filter(ch => /[\p{L}\p{N}]/u.test(ch)).join('') : q.replace(/\s+/g, ' ').trim();
+  return loose ? [...fold(q)].filter(ch => /[\p{L}\p{N}]/u.test(ch)).join('') : q.replace(/\s+/g, ' ').trim();
 };
 
 // Every occurrence of query on the page, as glyph ranges [a, z].
