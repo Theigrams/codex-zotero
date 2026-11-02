@@ -73,7 +73,7 @@ npm run install-plugin
 ## 数据与隐私
 
 - 批注、笔记、论文地图、精读笔记都存在 Zotero 里；插件只通过 Zotero 的本地 API 读写，从不碰 Zotero 的数据库文件。
-- 本机还保存：阅读位置、标签页、设置、待写入队列（`~/.codex/codex-zotero`），页面缓存（`~/Library/Caches/codex-zotero`）。
+- 本机还保存：阅读位置、标签页、设置、待写入队列、增强识别结果（`~/Library/Application Support/codex-zotero`），页面缓存（`~/Library/Caches/codex-zotero`）。
 - 你提问时，选段文字和识别内容或原图截图会发到 Codex 对话里；生成论文地图时，论文全文会经 Codex CLI 发给模型（默认 `gpt-6.1-sol`）。这些都只在你主动操作时发生。
 
 ## 卸载

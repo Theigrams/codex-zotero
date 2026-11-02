@@ -11,7 +11,7 @@
 | 精读问题 | 导读时 Codex 带着读的问题；`##` 分组、`###` 问题标题、其下一段为问题全文 |
 | 增强识别 | 总开关（默认关）、MinerU Key、自部署 MinerU 的地址与 Key（mineru-kit api-server，填服务根地址，须 https）、自部署失败时是否改用官方（默认否）。Key 存在 macOS 钥匙串；"测试连接"检查地址与 Key，不上传 |
 
-设置保存在 `~/.codex/codex-zotero/preferences.json`，对所有论文生效。
+设置保存在 `~/Library/Application Support/codex-zotero/state/preferences.json`，对所有论文生效。
 
 ## 环境变量
 
@@ -24,7 +24,7 @@
 | `CODEX_ZOTERO_NODE` | `/Applications/ChatGPT.app/Contents/Resources/cua_node/bin/node` | 运行插件服务的 Node（只在安装时使用，不写入启动配置） |
 | `CODEX_ZOTERO_MAP_MODEL` | `gpt-6.1-sol` | 论文地图的默认模型（设置里填了模型时以设置为准） |
 | `CODEX_ZOTERO_API` | `http://127.0.0.1:23119/api/` | Zotero 本地 API |
-| `CODEX_ZOTERO_STATE` | `~/.codex/codex-zotero` | 阅读位置、标签页、设置、写入队列 |
+| `CODEX_ZOTERO_STATE` | `$CODEX_ZOTERO_SUPPORT/state` | 阅读位置、标签页、设置、写入队列。旧版本放在 `~/.codex/codex-zotero`，升级后第一次启动时自动移过来 |
 | `CODEX_ZOTERO_CACHE` | `~/Library/Caches/codex-zotero` | 页面与文字缓存 |
-| `CODEX_ZOTERO_SUPPORT` | `~/Library/Application Support/codex-zotero` | 增强识别结果（要再上传才能重建，不放缓存目录） |
+| `CODEX_ZOTERO_SUPPORT` | `~/Library/Application Support/codex-zotero` | 不能重建的数据：增强识别结果（要再上传）和状态目录（不放 `~/.codex`，重置 Codex 时不会丢） |
 | `CODEX_ZOTERO_HELPERS` | `4` | 并行的 PDFKit 辅助进程数 |

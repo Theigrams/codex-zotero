@@ -23,7 +23,7 @@ import { ReadingNotes } from './reading.mjs';
 import { Paper } from './paper.mjs';
 import { Recognition } from './recognition.mjs';
 import { Secrets } from './secrets.mjs';
-import { State } from './state.mjs';
+import { LEGACY_STATE, State, moveState, stateDir, supportDir } from './state.mjs';
 import { TextService } from './text.mjs';
 import { modelTools } from './tools.mjs';
 import { resolvePdf, searchAnnotations, searchLibrary } from './zotero.mjs';
@@ -38,10 +38,12 @@ const documents = new Documents({
   pool, cacheRoot: process.env.CODEX_ZOTERO_CACHE || join(homedir(), 'Library', 'Caches', 'codex-zotero'),
 });
 const renderer = new Renderer(pool);
-const stateRoot = process.env.CODEX_ZOTERO_STATE || join(homedir(), '.codex', 'codex-zotero');
+// The state moves out of ~/.codex on the first start after an upgrade; if that fails, it stays where it was.
+const stateRoot = process.env.CODEX_ZOTERO_STATE || await moveState(LEGACY_STATE, stateDir()).then(() => stateDir(), () => LEGACY_STATE);
 const state = new State(stateRoot);
-// What must not be lost and cannot be rebuilt: enhanced-recognition results.
-const supportRoot = process.env.CODEX_ZOTERO_SUPPORT || join(homedir(), 'Library', 'Application Support', 'codex-zotero');
+// What must not be lost and cannot be rebuilt: enhanced-recognition results
+// here, the state in its state/ folder.
+const supportRoot = supportDir();
 const secrets = new Secrets();
 const recognition = new Recognition({ root: supportRoot, secrets, settings: () => state.prefs(), ...(process.env.CODEX_ZOTERO_FAST === '1' ? { poll: 200 } : {}) });
 // CODEX_ZOTERO_FAST=1 (the browser preflight only): shorter waits everywhere, so the checks need not sit through

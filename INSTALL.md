@@ -87,8 +87,8 @@ npm run install-plugin
 
 ```bash
 npm run uninstall-plugin                 # 移除插件和插件市场
-npm run uninstall-plugin -- --all        # 同时删除阅读状态 ~/.codex/codex-zotero、缓存 ~/Library/Caches/codex-zotero、
-                                         # 增强识别结果 ~/Library/Application Support/codex-zotero 和钥匙串里的 MinerU Key
+npm run uninstall-plugin -- --all        # 同时删除 ~/Library/Application Support/codex-zotero（阅读状态、设置、增强识别结果）、
+                                         # 缓存 ~/Library/Caches/codex-zotero 和钥匙串里的 MinerU Key
 ```
 
 字体留在 `~/Library/Fonts`，脚本会列出文件；确认其他程序不用后可手动删除。Zotero 里的批注和笔记不受影响。

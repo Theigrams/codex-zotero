@@ -1,7 +1,9 @@
-// Local reader state: preferences and, per document, where the reader left off.
-// Annotations and notes live in Zotero; nothing here is precious.
-import { readdir } from 'node:fs/promises';
-import { join } from 'node:path';
+// Local reader state: preferences and, per document, where the reader left off; the write queue and Zotero's
+// write permission sit in the same folder (annotations.mjs). Annotations and notes live in Zotero, but the
+// preferences (a custom map prompt, reading questions) cannot be rebuilt.
+import { cp, mkdir, readdir, rename, rm, stat } from 'node:fs/promises';
+import { homedir } from 'node:os';
+import { dirname, join } from 'node:path';
 import { DEFAULT_PALETTE, cleanPalette } from '../shared/annotations.mjs';
 import { ACTIONS, reserved } from '../shared/keys.mjs';
 import { parseTemplate } from './reading-questions.mjs';
@@ -18,6 +20,30 @@ const MAX_PROMPT = 20000;
 const OLD_DEFAULT = ['#ffd400重点', '#a28ae5疑问', '#2ea8e5定义', '#5fb236启发', '#ff6666存疑'];
 const isOldDefault = p => Array.isArray(p) && p.map(e => `${e.color}${e.tag}`).join() === OLD_DEFAULT.join();
 const MAX_TABS = 12;
+
+// Where it lives: in Application Support with the other data that cannot be rebuilt (user decision, 2026-10-26),
+// not in ~/.codex, which goes when Codex is reset. CODEX_ZOTERO_SUPPORT / CODEX_ZOTERO_STATE put them elsewhere.
+export const supportDir = (env = process.env) => env.CODEX_ZOTERO_SUPPORT || join(homedir(), 'Library', 'Application Support', 'codex-zotero');
+export const stateDir = (env = process.env) => env.CODEX_ZOTERO_STATE || join(supportDir(env), 'state');
+export const LEGACY_STATE = join(homedir(), '.codex', 'codex-zotero'); // until 2026-11
+
+const exists = path => stat(path).then(() => true, () => false);
+
+// Moves the state folder from its old place, once and as a whole (a rename on the same disk), unless the new
+// place already exists — then the old folder stays as it is. → true when it moved.
+export async function moveState(from, to) {
+  if (await exists(to) || !(await exists(from))) return false;
+  await mkdir(dirname(to), { recursive: true });
+  try {
+    await rename(from, to);
+  } catch (e) {
+    if (await exists(to)) return false; // another server process moved it first
+    if (e.code !== 'EXDEV') throw e;
+    await cp(from, to, { recursive: true, preserveTimestamps: true }); // CODEX_ZOTERO_SUPPORT on another disk
+    await rm(from, { recursive: true, force: true });
+  }
+  return true;
+}
 
 export class State {
   constructor(root) {

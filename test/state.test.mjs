@@ -3,7 +3,7 @@ import assert from 'node:assert/strict';
 import { mkdtemp, rm, writeFile, mkdir } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { State } from '../src/server/state.mjs';
+import { State, moveState, stateDir, supportDir } from '../src/server/state.mjs';
 import { resolvePdf } from '../src/server/zotero.mjs';
 
 async function withState(run) {
@@ -75,3 +75,36 @@ test('tabs open after the active one, close to the right neighbor, and persist',
   await state.closeTab(b);
   assert.deepEqual(await state.closeTab(a), { tabs: [], active: null });
 }));
+
+test('the state moves out of ~/.codex once, as a whole, and never over a newer one', async () => {
+  const root = await mkdtemp(join(tmpdir(), 'codex-zotero-move-'));
+  const { readFile, stat } = await import('node:fs/promises');
+  try {
+    const old = join(root, '.codex', 'codex-zotero');
+    const to = join(root, 'Application Support', 'codex-zotero', 'state');
+    assert.equal(await moveState(old, to), false, 'nothing to move');
+    await mkdir(join(old, 'documents'), { recursive: true });
+    await writeFile(join(old, 'preferences.json'), '{"mapPrompt":"mine"}', { mode: 0o600 });
+    await writeFile(join(old, 'documents', 'abc.json'), '{"position":{"page":8}}');
+    assert.equal(await moveState(old, to), true);
+    assert.equal(JSON.parse(await readFile(join(to, 'preferences.json'), 'utf8')).mapPrompt, 'mine');
+    assert.equal((await stat(join(to, 'preferences.json'))).mode & 0o777, 0o600, 'permissions kept');
+    assert.ok(await readFile(join(to, 'documents', 'abc.json'), 'utf8'));
+    await assert.rejects(stat(old), 'the old folder is gone');
+    // An old Codex process still running writes the old folder again: the moved state is not touched.
+    await mkdir(old, { recursive: true });
+    await writeFile(join(old, 'preferences.json'), '{"mapPrompt":"stale"}');
+    assert.equal(await moveState(old, to), false);
+    assert.equal(JSON.parse(await readFile(join(to, 'preferences.json'), 'utf8')).mapPrompt, 'mine');
+  } finally {
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
+test('state and support folders: Application Support by default, the environment can move them', () => {
+  const home = process.env.HOME;
+  assert.equal(supportDir({}), join(home, 'Library', 'Application Support', 'codex-zotero'));
+  assert.equal(stateDir({}), join(home, 'Library', 'Application Support', 'codex-zotero', 'state'));
+  assert.equal(stateDir({ CODEX_ZOTERO_SUPPORT: '/x' }), '/x/state');
+  assert.equal(stateDir({ CODEX_ZOTERO_SUPPORT: '/x', CODEX_ZOTERO_STATE: '/y' }), '/y');
+});

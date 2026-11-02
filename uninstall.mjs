@@ -9,6 +9,7 @@ import { homedir } from 'node:os';
 import { join } from 'node:path';
 import { MARKET, PLUGIN } from './build.mjs';
 import { SECRET_NAMES, Secrets } from './src/server/secrets.mjs';
+import { LEGACY_STATE, stateDir, supportDir } from './src/server/state.mjs';
 
 const CODEX = process.env.CODEX_ZOTERO_CODEX || '/Applications/ChatGPT.app/Contents/Resources/codex-cli/CodexCLI.app/Contents/MacOS/codex';
 const run = args => {
@@ -21,11 +22,11 @@ const run = args => {
 
 run(['plugin', 'remove', `${PLUGIN}@${MARKET}`]);
 run(['plugin', 'marketplace', 'remove', MARKET]);
-const state = process.env.CODEX_ZOTERO_STATE || join(homedir(), '.codex', 'codex-zotero');
+const state = stateDir();
 const cache = process.env.CODEX_ZOTERO_CACHE || join(homedir(), 'Library', 'Caches', 'codex-zotero');
-const support = process.env.CODEX_ZOTERO_SUPPORT || join(homedir(), 'Library', 'Application Support', 'codex-zotero');
+const support = supportDir();
 if (process.argv.includes('--all')) {
-  for (const dir of [state, cache, support]) await rm(dir, { recursive: true, force: true });
+  for (const dir of [state, LEGACY_STATE, cache, support]) await rm(dir, { recursive: true, force: true });
   for (const name of SECRET_NAMES) await new Secrets().set(name, '');
   console.log(`removed ${state}, ${cache}, ${support} and the MinerU keys in the keychain`);
 } else {

@@ -32,7 +32,7 @@ Codex 桌面版
 | 数据 | 存放 |
 |---|---|
 | 批注、问答批注、笔记、论文地图、精读笔记 | Zotero（只经本地 API 读写，写入前需用户授权） |
-| 阅读位置、标签页、设置、待写入队列、写入授权 | `~/.codex/codex-zotero` |
+| 阅读位置、标签页、设置、待写入队列、写入授权 | `~/Library/Application Support/codex-zotero/state`（旧版本在 `~/.codex/codex-zotero`，升级后自动移过来） |
 | 渲染条带与文字缓存（按 PDF 指纹） | `~/Library/Caches/codex-zotero` |
 
 ## 关键流程
