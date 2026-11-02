@@ -99,9 +99,12 @@ function cells(line) {
   return out;
 }
 
+// Models write \( … \) and \[ … \] too, whatever the prompt says: read them as $ … $ and $$ … $$.
+const dollars = md => md.replace(/\\\[([\s\S]+?)\\\]/g, (_, t) => `$$${t}$$`).replace(/\\\((.+?)\\\)/g, (_, t) => `$${t}$`);
+
 export function markdownToNote(md, refs = null) {
   const inline_ = t => inline(t, refs);
-  const lines = md.replace(/\r/g, '').split('\n');
+  const lines = dollars(md.replace(/\r/g, '')).split('\n');
   const out = [];
   let list = null;
   let para = [];

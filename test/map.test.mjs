@@ -19,6 +19,13 @@ test('a map in Markdown becomes a Zotero note: headings, lists, tables, Zotero m
   assert.ok(!/<script/.test(markdownToNote('<script>alert(1)</script>')));
 });
 
+test('formulas written with \\( \\) and \\[ \\] become Zotero math nodes as well', () => {
+  const html = markdownToNote('速度 \\(v = \\dot{s}\\) 恒定：\n\\[\nl(u) = \\int_a^b \\lVert \\mathbf{C}\'(u) \\rVert \\,\\mathrm{d}u\n\\]');
+  assert.match(html, /<span class="math">\$v = \\dot\{s\}\$<\/span>/);
+  assert.match(html, /<pre class="math">\$\$l\(u\) = \\int_a\^b/);
+  assert.ok(!html.includes('\\('), html);
+});
+
 test('the map note says what made it, when and for which PDF', () => {
   const html = mapNoteHTML('## 一句话\n内容', { title: 'Paper', model: 'gpt-6.1-sol', date: '2026-10-24', fingerprint: 'e20f95bd9134' });
   assert.ok(noteText(html).startsWith('# 论文地图：Paper'));

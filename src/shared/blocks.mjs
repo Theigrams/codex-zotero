@@ -122,3 +122,34 @@ export function recognizedCaptions(index) {
   });
   return out;
 }
+
+// What MinerU read where the user selected, so a question can carry it instead of a picture. rects: the
+// selection's line boxes, or the one box of a region; a block counts when it covers 30% of a box or the box 30%
+// of it. → equations as $$ LaTeX $$, tables as Markdown, paragraphs only when they hold formulas (all = every
+// block's text: for a region, or a selection whose glyphs are unreadable). null when nothing recognized is
+// there, or a figure or an empty equation or table is: only a picture shows those.
+const area = r => Math.max(0, r[2]) * Math.max(0, r[3]);
+const shared = (a, b) => {
+  const w = Math.min(a[0] + a[2], b[0] + b[2]) - Math.max(a[0], b[0]);
+  const h = Math.min(a[1] + a[3], b[1] + b[3]) - Math.max(a[1], b[1]);
+  return w > 0 && h > 0 ? (w * h) / Math.max(1e-6, Math.min(area(a), area(b))) : 0;
+};
+
+export function readWithin(blocks, rects, { all = false } = {}) {
+  const hit = blocks.filter(b => b.rect && rects.some(r => shared(b.rect, r) >= 0.3));
+  if (!hit.length) return null;
+  const out = [];
+  for (const b of hit) {
+    if (FIGURE.has(b.type)) return null;
+    if (b.type === 'equation') {
+      if (!b.latex) return null;
+      out.push(`$$\n${b.latex}\n$$`);
+    } else if (b.type === 'table') {
+      if (!(b.table || b.text)) return null;
+      out.push(b.table || b.text);
+    } else if (b.text && (all || /\$/.test(b.text))) {
+      out.push(String(b.text));
+    }
+  }
+  return all && !out.length ? null : out;
+}

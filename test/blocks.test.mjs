@@ -1,6 +1,6 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { pickUnit, recognizedCaptions, unitsOf } from '../src/shared/blocks.mjs';
+import { pickUnit, readWithin, recognizedCaptions, unitsOf } from '../src/shared/blocks.mjs';
 
 const chart = (rect, caption) => ({ type: 'chart', rect, ...(caption ? { caption } : {}) });
 const text = (rect, t = 'A paragraph of running text that goes on.') => ({ type: 'text', rect, text: t });
@@ -54,4 +54,25 @@ test('numbered figures and tables become captions for the structure index', () =
     { kind: '图', label: '1', page: 1, y: 400, x: 175, text: 'A figure.', rect: [50, 400, 250, 150] },
     { kind: '表', label: '2', page: 1, y: 450, x: 445, text: 'Limits', rect: [320, 450, 250, 100] },
   ]);
+});
+
+test('a question carries what MinerU read where the user selected, unless a figure is there', () => {
+  const blocks = [
+    text([50, 100, 250, 40], 'where $\\Theta_j$ are the weights'), // 0 a paragraph with a formula
+    text([50, 150, 250, 40]),                                      // 1 plain text
+    { type: 'equation', rect: [50, 200, 250, 30], latex: '\\Phi^*(u) = \\sum_j \\Theta_j N_{j,k}(u) \\tag{12}' },
+    { type: 'table', rect: [50, 240, 250, 60], table: '| A | 2 |\n| --- | --- |' },
+    chart([320, 100, 200, 150]),
+    { type: 'equation', rect: [320, 300, 200, 20], latex: '' },  // MinerU gave no LaTeX
+  ];
+  const line = (y, x = 60) => [x, y, 200, 10];
+  // Lines through the formula paragraph, the plain one and the equation: the formulas, not the plain text.
+  assert.deepEqual(readWithin(blocks, [line(110), line(160), line(210)]), ['where $\\Theta_j$ are the weights', '$$\n\\Phi^*(u) = \\sum_j \\Theta_j N_{j,k}(u) \\tag{12}\n$$']);
+  assert.deepEqual(readWithin(blocks, [line(160)]), [], 'plain text: nothing to add, and no picture needed');
+  assert.deepEqual(readWithin(blocks, [line(160)], { all: true }), ['A paragraph of running text that goes on.']);
+  assert.deepEqual(readWithin(blocks, [[45, 235, 260, 70]], { all: true }), ['| A | 2 |\n| --- | --- |'], 'a region on the table');
+  assert.equal(readWithin(blocks, [[320, 120, 100, 50]], { all: true }), null, 'a figure: only a picture shows it');
+  assert.equal(readWithin(blocks, [line(305, 330)]), null, 'an equation without LaTeX');
+  assert.equal(readWithin(blocks, [[50, 700, 100, 10]]), null, 'nothing recognized there');
+  assert.equal(readWithin(blocks, [line(138)]), null, 'a line that only grazes a block does not count');
 });

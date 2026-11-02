@@ -881,7 +881,7 @@ async function main() {
     },
   });
   blocks = new BlockLayer({ reader, call: host.call, copyText, copyImage, toast, exitKey: () => showCombo(keys.blocks) });
-  conversation = new Conversation({ host, reader, selection });
+  conversation = new Conversation({ host, reader, selection, blocks });
   find = new Find({ reader, selection });
   links = new Links({
     reader, call: host.call, pointAt: (e, el, k) => selection.pointAt(e, el, k), textFor: k => selection.textFor(k), onMove: () => updateBar(),

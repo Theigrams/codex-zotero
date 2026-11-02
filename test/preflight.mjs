@@ -495,6 +495,13 @@ try {
   check('a long answer is saved as given: brevity is guidance, not a limit', !long.error && !!kept, long.text || long.error);
   const bad = await model('annotate', { quote: 'this sentence is not in the paper anywhere' });
   check('annotate refuses a quote it cannot find', /找不到/.test(bad.error || ''), bad.error);
+  const keyQuote = 'admissible tool orientation annulus';
+  const key1 = await model('annotate', { quote: keyQuote, page: 1, meaning: '定义' });
+  const keyItem = await until(() => stored().find(a => a.data.tags.some(t => t.tag === 'AI标注')));
+  const key2 = await model('annotate', { quote: keyQuote, page: 1, meaning: '重点' });
+  check('a place the model highlights on its own is tagged AI标注, and not highlighted twice',
+    keyItem?.data.annotationColor === '#2ea8e5' && /已有批注/.test(key2.text || '') && stored().filter(a => a.data.tags.some(t => t.tag === 'AI标注')).length === 1,
+    `${key1.text || key1.error} / ${key2.text || key2.error}`);
   const show = await model('show_location', { quote: 'admissible tool orientation annulus', page: 1 });
   const shown = await until(() => page.evaluate(() => document.querySelectorAll('.flash').length > 0 && window.__reader.currentPage()), 4000);
   check('show_location scrolls the panel there and outlines it', shown === 1, `${show.text || show.error} → page ${shown}`);
@@ -775,6 +782,27 @@ try {
   await page.keyboard.press('KeyM');
   await page.keyboard.up('Shift');
   check('⇧M again hides them', await until(() => page.evaluate(() => !document.querySelector('.blk'))));
+  // On a recognized page a question about an equation carries MinerU's LaTeX instead of a picture.
+  const eqOnScreen = await page.evaluate(([x, y, w, h]) => {
+    const n = document.querySelector('.page[data-page="1"]').getBoundingClientRect();
+    const [rx, ry, rw, rh] = window.__reader.region(0);
+    const sx = v => n.left + ((v - rx) / rw) * n.width, sy = v => n.top + ((v - ry) / rh) * n.height;
+    return [sx(x) - 3, sy(y) - 3, sx(x + w) + 3, sy(y + h) + 3];
+  }, eqBlock.rect);
+  await page.keyboard.down('Alt');
+  await page.mouse.move(eqOnScreen[0], eqOnScreen[1]);
+  await page.mouse.down();
+  await page.mouse.move(eqOnScreen[2], eqOnScreen[3], { steps: 6 });
+  await page.mouse.up();
+  await page.keyboard.up('Alt');
+  await sleep(300);
+  await page.click('#ask');
+  await page.type('#askInput', '这个式子在算什么？');
+  await page.keyboard.press('Enter');
+  const eqAsked = await until(() => page.evaluate(() => window.__sent.filter(m => m.kind === 'message').at(-1)), 4000);
+  check('a question on a recognized equation carries its LaTeX, not a picture',
+    eqAsked?.text.startsWith('这个式子') && eqAsked.text.includes('\\Phi^*(u)') && eqAsked.image === null, eqAsked ? `${eqAsked.image} ${eqAsked.text.slice(-120)}` : 'none');
+  await page.keyboard.press('Escape');
   const asked = await model('paper_recognize', { itemKey: 'PAPER002' });
   const askedDone = await until(async () => /已有增强识别结果/.test((await model('paper_recognize', { itemKey: 'PAPER002' })).text || ''), 10000);
   check('paper_recognize (the user asked for it) recognizes another paper in the background, without asking again', /已开始增强识别/.test(asked.text || '') && askedDone, asked.text || asked.error);

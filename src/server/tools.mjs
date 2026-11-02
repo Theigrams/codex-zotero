@@ -4,7 +4,7 @@
 import { mkdir, writeFile } from 'node:fs/promises';
 import { join } from 'node:path';
 import { z } from 'zod';
-import { QA_TAG, colorInfo, qaEntry } from '../shared/annotations.mjs';
+import { AI_TAG, QA_TAG, colorInfo, qaEntry } from '../shared/annotations.mjs';
 import { childNotes, getNote, noteSection, noteText } from './notes.mjs';
 import { buildOutline, equationRegion, outlineText, pageLines } from './outline.mjs';
 import { equations, withRecognized } from './recognition.mjs';
@@ -43,6 +43,11 @@ function structureLines(o) {
 }
 
 const overlaps = (a, b) => a.some(([x, y, w, h]) => b.some(([X, Y, W, H]) => x < X + W && X < x + w && y < Y + H && Y < y + h));
+// The same place: some box of one covers half of a box of the other (lines next to each other only touch).
+const samePlace = (a, b) => a.some(([x, y, w, h]) => b.some(([X, Y, W, H]) => {
+  const iw = Math.min(x + w, X + W) - Math.max(x, X), ih = Math.min(y + h, Y + H) - Math.max(y, Y);
+  return iw > 0 && ih > 0 && iw * ih >= 0.5 * Math.min(w * h, W * H);
+}));
 
 function describe(a, palette) {
   const c = colorInfo(a.color, palette);
@@ -317,7 +322,7 @@ export function modelTools(ctx) {
     },
 
     annotate: {
-      description: 'Create a Zotero annotation on the paper, written in the background (Zotero may ask the user once to allow writing). Locate it by an exact quote from the paper (with page if known) or use the user\'s current selection. To save an answer to a question about a specific place, pass question and answer: it becomes a highlight in the color of the user\'s 问答 tag (purple if there is none) tagged AI问答, whose comment is "问：…\\n答：…"; a second answer at the same place updates that annotation instead of adding one.',
+      description: 'Create a Zotero annotation on the paper, written in the background (Zotero may ask the user once to allow writing). Locate it by an exact quote from the paper (with page if known) or use the user\'s current selection. To save an answer to a question about a specific place, pass question and answer: it becomes a highlight in the color of the user\'s 问答 tag (purple if there is none) tagged AI问答, whose comment is "问：…\\n答：…"; a second answer at the same place updates that annotation instead of adding one. Other annotations are tagged AI标注; a place that already has an annotation is not annotated again. Formulas in comments and answers as LaTeX $…$.',
       schema: {
         ...paperArg,
         quote: z.string().max(4000).optional().describe('Exact text from the paper (a sentence or phrase) to annotate.'),
@@ -345,18 +350,21 @@ export function modelTools(ctx) {
         const qa = question && answer;
         const pal = await palette();
         const color = qa ? qaEntry(pal).color : m ? colorOf(pal, m) : pal[0].color;
+        const { items } = await annotations.list(doc);
         if (qa) {
           comment = `问：${question.trim()}\n答：${answer.trim()}`;
-          const { items } = await annotations.list(doc);
           const same = items.find(a => a.tags.includes(QA_TAG) && a.page === sel.page && overlaps(a.rects, sel.rects));
           if (same) {
             await annotations.update(doc, same.key, { comment: mergeQA(same.comment, comment, question.trim()) });
             return { text: `已把问答并入第 ${sel.page} 页已有的问答批注 ${same.key}。`, data: { key: same.key, updated: true } };
           }
+        } else {
+          const there = items.find(a => a.page === sel.page && samePlace(a.rects, sel.rects));
+          if (there) return { text: `第 ${sel.page} 页这里已有批注 ${there.key}，没有重复添加；要改含义或评论用 update_annotation。`, data: { key: there.key, existing: true } };
         }
-        const key = await annotations.create(doc, sel, { color, type: underline ? 'underline' : 'highlight', comment, tags: qa ? [QA_TAG] : [] });
+        const key = await annotations.create(doc, sel, { color, type: underline ? 'underline' : 'highlight', comment, tags: [qa ? QA_TAG : AI_TAG] });
         const what = sel.kind === 'region' ? '框选区域' : `「${clip(sel.text, 80)}」`;
-        return { text: `已在第 ${sel.page} 页建立批注 ${key}（${colorInfo(color, pal)?.tag ?? color}${qa ? ' · AI问答' : ''}）：${what}。正在后台写入 Zotero。`, data: { key, page: sel.page } };
+        return { text: `已在第 ${sel.page} 页建立批注 ${key}（${colorInfo(color, pal)?.tag ?? color} · ${qa ? QA_TAG : AI_TAG}）：${what}。正在后台写入 Zotero。`, data: { key, page: sel.page } };
       },
     },
 

@@ -17,6 +17,7 @@ export const DEFAULT_PALETTE = [
 export const ZOTERO_COLORS = ['#ffd400', '#ff6666', '#5fb236', '#2ea8e5', '#a28ae5', '#e56eee', '#f19837', '#aaaaaa'];
 export const DEFAULT_COLOR = DEFAULT_PALETTE[0].color;
 export const QA_TAG = 'AI问答';
+export const AI_TAG = 'AI标注'; // other annotations the model makes (a key place it highlighted while explaining)
 const MAX_PALETTE = 9;
 
 export const colorInfo = (color, palette = DEFAULT_PALETTE) => palette.find(c => c.color === String(color).toLowerCase()) || null;
